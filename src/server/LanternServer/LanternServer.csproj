@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>LanternServer</RootNamespace>
+    <UserSecretsId>lantern-server-dev</UserSecretsId>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanternServer.Tests" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Extensions.Hosting" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
+    <PackageReference Include="LiteNetLib" />
+    <PackageReference Include="MessagePack" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../shared/Lantern.Protocol/Lantern.Protocol.csproj" />
+    <ProjectReference Include="../../shared/Lantern.Abstractions/Lantern.Abstractions.csproj" />
+    <ProjectReference Include="../Lantern.SourceQuery/Lantern.SourceQuery.csproj" />
+    <ProjectReference Include="../Lantern.Rcon/Lantern.Rcon.csproj" />
+    <ProjectReference Include="../Lantern.Persistence/Lantern.Persistence.csproj" />
+  </ItemGroup>
+</Project>

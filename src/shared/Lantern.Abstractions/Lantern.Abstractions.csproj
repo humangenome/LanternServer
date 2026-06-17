@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Lantern.Abstractions</RootNamespace>
+  </PropertyGroup>
+</Project>

@@ -49,7 +49,7 @@ public sealed class LanternServerOptions
     /// the native path (the ?Password= option in the launch URL is dropped by
     /// the game's internal map travel, the native check sees a mismatch, and
     /// the process self-terminates with "appError: Couldn't spawn player").
-    /// Password enforcement routes through LanternAuth.lua only (see
+    /// Password enforcement routes through the g2_sshost Lua runtime only (see
     /// <see cref="LanternAuthPassword"/>). Lua, A2S, and native (LanternPlugin.cpp)
     /// all ignore this field. Field is kept for binary appsettings.json
     /// compatibility only; do NOT set it.
@@ -57,8 +57,8 @@ public sealed class LanternServerOptions
     public string ServerPassword { get; set; } = "";
 
     /// <summary>
-    /// Password enforced by LanternAuth.lua's K2_PostLogin hook for
-    /// incoming remote clients. Written by the panel into appsettings.json.
+    /// Password enforced by g2_sshost after incoming remote clients are admitted.
+    /// Written by the host configuration into appsettings.json.
     /// Empty string means open server (no password gate). The listen-server
     /// host is positively detected and exempt from the gate. Used by
     /// SourceQueryHostedService for the A2S PasswordRequired flag so the
@@ -83,8 +83,9 @@ public sealed class LanternServerOptions
 
     /// <summary>
     /// Optional path to a single-line file containing the PID of the game
-    /// process this LanternServer instance owns. Used by KillGame as a
-    /// fallback when neither <see cref="GameInstallRoot"/> nor a command-line
+    /// process this LanternServer instance owns. Used by KillGame and the
+    /// runtime-heartbeat watchdog as a fallback when neither
+    /// <see cref="GameInstallRoot"/> nor a command-line
     /// scope exists (e.g. panel-managed deploys where the panel's
     /// PowerShell owns the game's lifecycle and writes Logs\game.pid). The pid
     /// is always validated against the game process-name whitelist before
@@ -93,7 +94,7 @@ public sealed class LanternServerOptions
     /// </summary>
     public string GamePidFile { get; set; } = "";
 
-    /// <summary>Heartbeat window — if plugin doesn't ping in this many seconds, assume crashed.</summary>
+    /// <summary>Freshness window for g2_sshost roster and optional plugin heartbeats.</summary>
     public int PluginHeartbeatTimeoutSeconds { get; set; } = 30;
 
     /// <summary>

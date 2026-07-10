@@ -28,6 +28,10 @@ public sealed class PipeServerState
 
     public DateTimeOffset? LastHeartbeatAt { get; set; }
 
+    // g2_sshost rewrites roster.json from inside the game every few seconds.
+    // This is the shipping runtime heartbeat; the native pipe plugin is optional.
+    public DateTimeOffset? LastRosterAt { get; set; }
+
     public int LastReportedPlayerCount { get; set; }
 
     public int EffectivePlayerCount => Players.Count;
@@ -40,11 +44,17 @@ public sealed class PipeServerState
         return DateTimeOffset.UtcNow - last.Value <= maxAge;
     }
 
-    // Native plugin reports auth state on every heartbeat (Lantern.dll).
-    // Password enforcement is Lua-only and the supervisor emits
+    public bool HasFreshRoster(TimeSpan maxAge)
+    {
+        var last = LastRosterAt;
+        return last is not null && DateTimeOffset.UtcNow - last.Value <= maxAge;
+    }
+
+    // The optional native plugin reports auth state on every pipe heartbeat.
+    // Password enforcement belongs to g2_sshost and the supervisor emits
     // ServerPassword="" to plugin-config.json, so the expected steady-state
     // on every endpoint is Configured=0/Ready=0.
-    // HeartbeatWatchdogService.CheckServerPasswordReady fail-closes if
+    // HeartbeatWatchdogService fail-closes if
     // it ever sees Configured=1 — that indicates a stale plugin config or a
     // manually-edited plugin-config.json, both of which can reproduce the
     // game crash loop if they race with the Lua gate. The legacy-plugin case
@@ -52,10 +62,9 @@ public sealed class PipeServerState
     public int LastServerPasswordConfigured { get; set; }
     public int LastServerPasswordHookReady { get; set; }
 
-    // Cached player list shipped over the IPC PlayerListSnapshot frame.
-    // SourceQueryHostedService + the launcher's HTTP /players endpoint
-    // read from this. Plugin enumerates the game's PlayerController list and
-    // ships a snapshot every few seconds.
+    // Cached player list populated by roster.json (shipping path) or the
+    // optional IPC PlayerListSnapshot frame. SourceQueryHostedService and the
+    // launcher's HTTP /players endpoint read from this.
     private List<PlayerSnapshot> _players = new();
     private readonly Dictionary<string, PlayerSnapshot> _logPlayers = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _playersGate = new();

@@ -8,9 +8,8 @@ using Microsoft.Extensions.Options;
 namespace LanternServer.Services;
 
 /// <summary>
-/// Source RCON server. Translates RCON commands into <see cref="FrameType.RconCommand"/>
-/// frames sent to the plugin and awaits the matching response, with a fallback
-/// for purely server-side commands (status, players, save).
+/// Source RCON server. Runtime status and player data come from the game process
+/// and g2_sshost roster heartbeat; the legacy native plugin pipe is optional.
 /// </summary>
 public sealed class RconHostedService : IHostedService
 {
@@ -128,10 +127,16 @@ public sealed class RconHostedService : IHostedService
 
     private string BuildStatus()
     {
-        var conn = _state.Connection;
-        return conn is null
-            ? $"instance={_opts.InstanceId} plugin=disconnected"
-            : $"instance={_opts.InstanceId} plugin=connected pid={conn.PluginPid} version={conn.PluginVersion} players={_state.EffectivePlayerCount}";
+        var gameAlive = GameProcessProbe.IsAlive(_opts.GamePidFile);
+        var heartbeatWindow = TimeSpan.FromSeconds(Math.Max(1, _opts.PluginHeartbeatTimeoutSeconds));
+        var runtimeReady = _state.HasFreshRoster(heartbeatWindow);
+        var online = gameAlive || runtimeReady || _state.HasFreshHeartbeat(heartbeatWindow);
+        var runtime = !online
+            ? "stopped"
+            : runtimeReady
+                ? "ready"
+                : _state.LastRosterAt is null ? "starting" : "stale";
+        return $"instance={_opts.InstanceId} game={(online ? "running" : "stopped")} runtime={runtime} players={_state.EffectivePlayerCount}";
     }
 
     private string BuildPlayers()

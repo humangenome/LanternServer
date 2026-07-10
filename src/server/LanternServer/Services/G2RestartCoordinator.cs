@@ -23,6 +23,7 @@ public sealed class G2RestartCoordinator
 {
     private static readonly string[] G2ProcessNames =
     [
+        "Grounded2Steam-Win64-Shipping",
         "Grounded2-Win64-Shipping",
         "Grounded2-WinGDK-Shipping",
         "Grounded2",

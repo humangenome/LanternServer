@@ -12,10 +12,9 @@ namespace LanternServer.Services;
 /// (<see cref="SourceQueryHostedService"/>) and the HTTP players endpoint
 /// (<see cref="LanternHttpService"/>) reflect live player counts and names.
 ///
-/// The producer is the server-side <c>LanternRoster</c> UE4SS Lua mod
-/// (<c>dist/ue4ss-server/Mods/LanternRoster/Scripts/main.lua</c>). It hooks
-/// <c>GameModeBase:K2_PostLogin</c> + <c>GameModeBase:Logout</c> and
-/// rewrites the JSON atomically every 5 seconds (also on join/leave).
+/// The producer is the server-side <c>g2_sshost</c> UE4SS Lua mod. It
+/// rewrites the JSON atomically every few seconds, including while empty,
+/// so the file is also the authoritative shipping-runtime heartbeat.
 ///
 /// File-based exchange was chosen over an FFI Lua → native plugin → IPC
 /// bridge because (a) the Lantern.dll plugin has no UE reflection access
@@ -98,6 +97,7 @@ public sealed class RosterFileWatcherService : BackgroundService
         }
         _state.SetPlayers(snapshots);
         _state.LastReportedPlayerCount = snapshots.Count;
+        _state.LastRosterAt = info.LastWriteTimeUtc;
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

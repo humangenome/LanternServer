@@ -240,17 +240,22 @@ public sealed class LanternHttpService : BackgroundService
             {
                 var heartbeatTimeout = TimeSpan.FromSeconds(Math.Max(1, _opts.PluginHeartbeatTimeoutSeconds));
                 var pluginOnline = _pipeState.HasFreshHeartbeat(heartbeatTimeout);
-                // Server is "online" if the plugin is pinging OR the Grounded 2 process is
-                // alive (lobby-parked servers are joinable even before the plugin pings).
+                var runtimeReady = _pipeState.HasFreshRoster(heartbeatTimeout);
+                // The shipping host uses g2_sshost + roster.json, not the optional
+                // native plugin pipe. Keep all three signals for standalone/backward
+                // compatibility; runtimeReady is authoritative for current packages.
                 var gameProcessAlive = GameProcessProbe.IsAlive(_opts.GamePidFile);
-                var online = pluginOnline || gameProcessAlive;
+                var online = runtimeReady || gameProcessAlive || pluginOnline;
                 int? heartbeatAgeSeconds = null;
                 if (_pipeState.LastHeartbeatAt is DateTimeOffset lastHeartbeat)
                     heartbeatAgeSeconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - lastHeartbeat).TotalSeconds);
+                int? runtimeHeartbeatAgeSeconds = null;
+                if (_pipeState.LastRosterAt is DateTimeOffset lastRoster)
+                    runtimeHeartbeatAgeSeconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - lastRoster).TotalSeconds);
 
                 _log.LogDebug(
-                    "/health decision: online={Online} (pluginOnline={Plugin}, gameProcessAlive={Process}, heartbeatAge={Age}s)",
-                    online, pluginOnline, gameProcessAlive, heartbeatAgeSeconds);
+                    "/health decision: online={Online} (runtimeReady={Runtime}, gameProcessAlive={Process}, runtimeAge={RuntimeAge}s, legacyPluginOnline={Plugin})",
+                    online, runtimeReady, gameProcessAlive, runtimeHeartbeatAgeSeconds, pluginOnline);
 
                 await WriteJsonAsync(res, online ? 200 : 503, new
                 {
@@ -263,6 +268,10 @@ public sealed class LanternHttpService : BackgroundService
                     query_port = _opts.QueryPort,
                     max_players = _opts.MaxPlayers,
                     player_count = _pipeState.EffectivePlayerCount,
+                    game_process_alive = gameProcessAlive,
+                    runtime_ready = runtimeReady,
+                    last_runtime_heartbeat_age_seconds = runtimeHeartbeatAgeSeconds,
+                    // Backward-compatible diagnostic for the reserved legacy IPC path.
                     plugin_connected = _pipeState.Connection is not null,
                     last_heartbeat_age_seconds = heartbeatAgeSeconds,
                 });

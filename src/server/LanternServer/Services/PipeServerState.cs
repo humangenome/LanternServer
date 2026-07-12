@@ -28,8 +28,8 @@ public sealed class PipeServerState
 
     public DateTimeOffset? LastHeartbeatAt { get; set; }
 
-    // g2_sshost rewrites roster.json from inside the game every few seconds.
-    // This is the shipping runtime heartbeat; the native pipe plugin is optional.
+    // g2_sshost emits a dedicated file-only runtime heartbeat every few seconds.
+    // Older host mods fall back to roster.json; the native pipe plugin is optional.
     public DateTimeOffset? LastRosterAt { get; set; }
 
     public int LastReportedPlayerCount { get; set; }

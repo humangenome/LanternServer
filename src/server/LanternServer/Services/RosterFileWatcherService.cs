@@ -13,8 +13,9 @@ namespace LanternServer.Services;
 /// (<see cref="LanternHttpService"/>) reflect live player counts and names.
 ///
 /// The producer is the server-side <c>g2_sshost</c> UE4SS Lua mod. It
-/// rewrites the JSON atomically every few seconds, including while empty,
-/// so the file is also the authoritative shipping-runtime heartbeat.
+/// rewrites the JSON atomically every few seconds. A separate file-only
+/// <c>runtime.heartbeat</c> is the authoritative shipping-runtime heartbeat,
+/// because roster reflection pauses during long map and admission transitions.
 ///
 /// File-based exchange was chosen over an FFI Lua → native plugin → IPC
 /// bridge because (a) the Lantern.dll plugin has no UE reflection access
@@ -27,26 +28,39 @@ public sealed class RosterFileWatcherService : BackgroundService
     private readonly ILogger<RosterFileWatcherService> _log;
     private readonly PipeServerState _state;
     private readonly string _rosterPath;
+    private readonly string _runtimeHeartbeatPath;
     private DateTimeOffset _lastReadAt = DateTimeOffset.MinValue;
     private long _lastFileSize = -1;
 
     public RosterFileWatcherService(ILogger<RosterFileWatcherService> log, PipeServerState state)
+        : this(log, state, AppContext.BaseDirectory)
+    {
+    }
+
+    internal RosterFileWatcherService(
+        ILogger<RosterFileWatcherService> log,
+        PipeServerState state,
+        string baseDirectory)
     {
         _log = log;
         _state = state;
         // Lua mod writes to <LanternServer dir>\roster.json. LanternServer's
         // cwd is its own install directory, so the relative path resolves.
-        _rosterPath = Path.Combine(AppContext.BaseDirectory, "roster.json");
+        _rosterPath = Path.Combine(baseDirectory, "roster.json");
+        _runtimeHeartbeatPath = Path.Combine(baseDirectory, "runtime.heartbeat");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _log.LogInformation("Roster watcher started: path={Path}", _rosterPath);
+        _log.LogInformation(
+            "Roster watcher started: roster={RosterPath} runtime_heartbeat={RuntimeHeartbeatPath}",
+            _rosterPath,
+            _runtimeHeartbeatPath);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                ReadIfChanged();
+                PollFiles();
             }
             catch (Exception ex)
             {
@@ -56,6 +70,18 @@ public sealed class RosterFileWatcherService : BackgroundService
             catch (TaskCanceledException) { break; }
         }
         _log.LogInformation("Roster watcher stopping");
+    }
+
+    internal void PollFiles()
+    {
+        UpdateRuntimeHeartbeat();
+        ReadIfChanged();
+    }
+
+    private void UpdateRuntimeHeartbeat()
+    {
+        if (!File.Exists(_runtimeHeartbeatPath)) return;
+        _state.LastRosterAt = new FileInfo(_runtimeHeartbeatPath).LastWriteTimeUtc;
     }
 
     private void ReadIfChanged()
@@ -97,7 +123,11 @@ public sealed class RosterFileWatcherService : BackgroundService
         }
         _state.SetPlayers(snapshots);
         _state.LastReportedPlayerCount = snapshots.Count;
-        _state.LastRosterAt = info.LastWriteTimeUtc;
+        // Backward compatibility for older host mods that do not yet emit the dedicated file.
+        if (!File.Exists(_runtimeHeartbeatPath))
+        {
+            _state.LastRosterAt = info.LastWriteTimeUtc;
+        }
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new()

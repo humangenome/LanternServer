@@ -40,7 +40,7 @@ The server runs headless on the WARP software renderer, so no GPU is required. R
 ## Installation
 
 ### Managed hosting
-[SurvivalServers.com Grounded 2 hosting](https://www.survivalservers.com/services/game_servers/grounded_2/?utm_source=github&utm_medium=readme_install&utm_campaign=lanternserver) ships the complete Lantern server runtime already installed and handles ports, updates, and panel integration.
+[SurvivalServers.com Grounded 2 hosting](https://www.survivalservers.com/services/game_servers/grounded2/?utm_source=github&utm_medium=readme_install&utm_campaign=lanternserver) ships the complete Lantern server runtime already installed and handles ports, updates, and panel integration.
 
 ### Self-host
 1. Download `LanternServer-v<version>.zip` from the [latest release](https://github.com/HumanGenome/LanternServer/releases/latest).

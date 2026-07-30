@@ -18,9 +18,9 @@
     <!-- Version surfaced by AssemblyInformationalVersionAttribute and used
          by LanternVersionInfo.LanternVersion in /api/v1/info responses. Bump
          in lockstep with the public release-notes file and the git tag. -->
-    <Version>0.1.22</Version>
-    <AssemblyVersion>0.1.22.0</AssemblyVersion>
-    <FileVersion>0.1.22.0</FileVersion>
+    <Version>0.1.23</Version>
+    <AssemblyVersion>0.1.23.0</AssemblyVersion>
+    <FileVersion>0.1.23.0</FileVersion>
     <!-- Strip the absolute checkout path from compiled output. Without a
          PathMap the compiler embeds the build machine's source path into the
          assembly (the PDB path record and [CallerFilePath] strings), leaking

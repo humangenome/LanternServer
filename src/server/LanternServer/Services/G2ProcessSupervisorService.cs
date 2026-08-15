@@ -202,9 +202,26 @@ public sealed class G2ProcessSupervisorService : BackgroundService
         NetServerMaxTickRate=60
         MaxClientRate=15000
         MaxInternetClientRate=10000
-        NetConnectionTimeout=60
-        InitialConnectTimeout=300.0
-        ConnectionTimeout=60.0
+        NetConnectionTimeout=420
+        InitialConnectTimeout=420.0
+        # The client writes 300/300; the host wrote 300/60, so the two halves of the
+        # same connection disagreed about how long a quiet moment is allowed to last.
+        # UE switches from InitialConnectTimeout to ConnectionTimeout the moment the
+        # connection gets an owning actor, i.e. exactly when a player has just been
+        # admitted and the heavy world load starts. g2_sshost raised this at runtime,
+        # but only once per host lifetime, so a lobby recycle silently dropped the
+        # raise and left admitted players on a 60s fuse. Write the value we actually
+        # want instead of relying on a one-shot runtime patch to correct it.
+        #
+        # 420, not 300, and the extra two minutes are measured rather than padded. Unreal picks
+        # between these two by connection STATE, not by whether a player exists: while the socket is
+        # still Pending it uses InitialConnectTimeout, and the moment the transport handshake completes
+        # it switches to ConnectionTimeout -- which on this game is long BEFORE the game's own login
+        # finishes. So ConnectionTimeout governs the entire admission wait, and admission has been
+        # measured completing anywhere from 53 to 320 seconds. A real customer join landed at 320s on
+        # 2026-08-14, i.e. past a 300 second ceiling, so 300 would still have cut the tail this is
+        # meant to protect.
+        ConnectionTimeout=420.0
         ServerTravelPause=4
 
         [URL]

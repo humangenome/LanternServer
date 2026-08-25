@@ -47,6 +47,7 @@ public static class Program
             builder.Services.AddSingleton<HmacKeyService>();
             builder.Services.AddSingleton<PipeServerState>();
             builder.Services.AddSingleton<G2RestartCoordinator>();
+            builder.Services.AddSingleton<IdentityChoiceService>();
 
             builder.Services.AddSingleton<SaveOrchestratorService>();
             builder.Services.AddSingleton<ChatService>();
@@ -56,7 +57,6 @@ public static class Program
             builder.Services.AddHostedService<HeartbeatWatchdogService>();
             builder.Services.AddHostedService<SourceQueryHostedService>();
             builder.Services.AddHostedService<RconHostedService>();
-            builder.Services.AddHostedService<G2ProcessSupervisorService>();
             builder.Services.AddHostedService<G2LogTailService>();
             builder.Services.AddHostedService<LanternHttpService>();
             builder.Services.AddHostedService<RosterFileWatcherService>();

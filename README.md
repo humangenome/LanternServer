@@ -5,14 +5,14 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue.svg)](#requirements)
 [![Game](https://img.shields.io/badge/Game-Grounded_2-darkgreen.svg)](https://store.steampowered.com/app/2661300/)
 
-LanternServer is the open-source host supervisor for [Lantern](https://github.com/HumanGenome/Lantern) multiplayer in **Grounded 2**. It starts and watches the hosted game process, takes and restores save snapshots, exposes an admin HTTP API, answers Source A2S query, and runs Source RCON.
+LanternServer is the open-source host control service for [Lantern](https://github.com/HumanGenome/Lantern) multiplayer in **Grounded 2**. It coordinates save snapshots and restores, exposes the join and admin HTTP APIs, answers Source A2S query, and runs Source RCON. The host's lifecycle wrapper owns the Grounded 2 process so panel-managed and self-hosted service managers have one lifecycle owner rather than two competing restart loops.
 
-Players join with the [Lantern desktop app](https://github.com/HumanGenome/Lantern). A playable host also needs Lantern's in-game runtime — a `ue4ss\` folder with the host mod and native runtime, plus the WARP redist — next to the `LanternServer\` folder. The **release zip bundles that runtime**, so a downloaded server is complete. Building from this source yourself produces the supervisor only.
+Players join with the [Lantern desktop app](https://github.com/HumanGenome/Lantern). A playable host also needs Lantern's in-game runtime — a `ue4ss\` folder with the host mod and native runtime, plus the WARP redist — next to the `LanternServer\` folder. The **release zip bundles that runtime**, so a downloaded server is complete. Building from this source yourself produces the control service only.
 
 ## Features
 
-### 🖥 Host supervision
-Starts Grounded 2 with the Lantern runtime, watches the game process, tracks the runtime heartbeat, and coordinates restarts.
+### 🖥 Host control
+Tracks the Lantern runtime heartbeat and coordinates save operations with the host's Grounded 2 lifecycle wrapper.
 
 ### 💾 Save snapshots
 Snapshots the world on every game auto-save (when `SnapshotsEnabled` is on) and on admin trigger. Restore swaps the save directory atomically, so a failed restore does not leave a half-written world.
@@ -32,10 +32,10 @@ Loads UE4SS Lua and native mods through the Lantern runtime layout, and publishe
 ## Requirements
 
 - Windows 10/11 or Windows Server, x64
-- Grounded 2 game files installed on the host machine (LanternServer launches them; it does not ship the game)
+- Grounded 2 game files installed on the host machine (the lifecycle wrapper launches them; Lantern does not ship the game)
 - Open/forwarded ports for gameplay, query, RCON, and admin HTTP
 
-The server runs headless on the WARP software renderer, so no GPU is required. Release builds are self-contained; a separate .NET install is not needed for normal use.
+The hosted game runs headless on the WARP software renderer, so no GPU is required. Release builds are self-contained; a separate .NET install is not needed for normal use.
 
 ## Installation
 
@@ -48,7 +48,7 @@ The server runs headless on the WARP software renderer, so no GPU is required. R
 3. Install Grounded 2 on the host and keep Steam logged in.
 4. Edit `LanternServer\appsettings.json`.
 5. Open/forward the ports below. The gameplay UDP port also needs a Windows Defender inbound allow rule, or players cannot reach the listen socket.
-6. Run `LanternServer\LanternServer.exe`.
+6. Launch Grounded 2 through the lifecycle wrapper, then run `LanternServer\LanternServer.exe` for query, RCON, world tools, and join identity. The bundled `host-instance.ps1` is the reference launch wrapper for self-hosted installs.
 
 Players connect with the Lantern app to `<host>:<GameplayPort>`.
 
@@ -70,7 +70,7 @@ LanternServer reads `appsettings.json` next to `LanternServer.exe`, under the `L
 
 ## Layout
 
-- `src/server/LanternServer` — host supervisor, HTTP admin API, watchdog
+- `src/server/LanternServer` — host control service, HTTP admin API, watchdog
 - `src/server/Lantern.Rcon` — Source RCON server
 - `src/server/Lantern.SourceQuery` — Source A2S query responder
 - `src/server/Lantern.Persistence` — save/snapshot storage

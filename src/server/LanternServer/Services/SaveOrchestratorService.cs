@@ -28,6 +28,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
     private readonly System.Threading.SemaphoreSlim _autoLock = new(1, 1);
     private DateTime _lastAutoSnapshotUtc = DateTime.MinValue;
     private static readonly TimeSpan AutoSnapshotDebounce = TimeSpan.FromSeconds(45);
+    private string GameSaveTree => Path.Combine(_opts.GameUserDir, "Saved", "Grounded2");
 
     public SaveOrchestratorService(
         ILogger<SaveOrchestratorService> log,
@@ -49,7 +50,6 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
     {
         _log.LogInformation("Save orchestrator ready; db={Path}, save_dir={Dir}, snapshots_enabled={Enabled}",
             _dbPath, _opts.SaveDir, _opts.SnapshotsEnabled);
-        TryNormalizeSaveSlots();
         if (_opts.SnapshotsEnabled)
         {
             TryStartFileWatcher();
@@ -75,10 +75,9 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
     }
 
     /// <summary>
-    /// Watch the game's SaveGames dir for auto-save writes. The game's host
-    /// process auto-saves savegame_0.sav every ~1 minute. When the file mtime
-    /// changes, debounce and trigger a Lantern snapshot. This is the "Lantern
-    /// snapshots, Grounded 2 owns the trigger" model — no save RPC needed.
+    /// Watch the canonical per-instance Grounded2 tree for completed World.csav
+    /// writes. Each save is a directory containing World.csav, HostPlayer.csav,
+    /// player files, and SaveGameHeaderData.savheader.
     /// </summary>
     private void TryStartFileWatcher()
     {
@@ -89,53 +88,22 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 _log.LogInformation("FileSystemWatcher skipped: GameUserDir not configured");
                 return;
             }
-            var sourceDir = Path.Combine(_opts.GameUserDir, "Saved", "SaveGames");
+            var sourceDir = GameSaveTree;
             Directory.CreateDirectory(sourceDir);
-            _watcher = new FileSystemWatcher(sourceDir, "savegame_*.sav")
+            _watcher = new FileSystemWatcher(sourceDir, "World.csav")
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
-                IncludeSubdirectories = false,
+                IncludeSubdirectories = true,
                 EnableRaisingEvents = true,
             };
             _watcher.Changed += (_, e) => _ = OnSaveFileChangedAsync(e.FullPath);
             _watcher.Created += (_, e) => _ = OnSaveFileChangedAsync(e.FullPath);
             _watcher.Renamed += (_, e) => _ = OnSaveFileChangedAsync(e.FullPath);
-            _log.LogInformation("FileSystemWatcher armed on {Dir} (savegame_*.sav)", sourceDir);
+            _log.LogInformation("FileSystemWatcher armed on {Dir} (**/World.csav)", sourceDir);
         }
         catch (Exception ex)
         {
             _log.LogWarning(ex, "FileSystemWatcher failed to start; auto-snapshots disabled");
-        }
-    }
-
-    /// <summary>
-    /// Grounded 2 listen-host startup creates a fresh savegame_N.sav when multiple
-    /// slots are present and no explicit "continue slot" is supplied. Lantern
-    /// hosts one world per instance, so keep the newest slot as savegame_0.sav
-    /// and archive the rest before the game process starts.
-    /// </summary>
-    private void TryNormalizeSaveSlots()
-    {
-        try
-        {
-            if (string.IsNullOrWhiteSpace(_opts.GameUserDir))
-            {
-                _log.LogInformation("Save slot normalization skipped: GameUserDir not configured");
-                return;
-            }
-
-            var sourceDir = Path.Combine(_opts.GameUserDir, "Saved", "SaveGames");
-            if (_coordinator.IsOwnedGameRunning())
-            {
-                _log.LogInformation("Save slot normalization skipped: owned Grounded 2 process is already running");
-                return;
-            }
-
-            SaveSlotNormalizer.Normalize(sourceDir, _log);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning(ex, "Save slot normalization failed; Grounded 2 may create a new save slot on this launch");
         }
     }
 
@@ -179,12 +147,9 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
 
         try
         {
-            // If plugin is connected, request a SaveQuiesce so the game flushes
-            // in-flight state. If not connected, fall through — Grounded 2 writes its
-            // own savegame_0.sav atomically (temp + rename), so a snapshot taken
-            // without quiesce is still self-consistent. This unblocks the
-            // FileSystemWatcher auto-snapshot path which fires when Grounded 2 has just
-            // finished writing the file.
+            // If the optional plugin is connected, request a quiesce. The shipping host
+            // normally reaches this path from a completed World.csav file event; wait
+            // briefly for the companion .csav/header writes to settle before archiving.
             var conn = _state.Connection;
             if (conn is not null)
             {
@@ -195,16 +160,22 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             }
 
             Directory.CreateDirectory(_opts.SaveDir);
-            var sourceDir = Path.Combine(_opts.GameUserDir, "Saved", "SaveGames");
+            var sourceDir = GameSaveTree;
             if (!Directory.Exists(sourceDir))
             {
                 _log.LogWarning("Save source dir not found: {Dir}", sourceDir);
                 return null;
             }
 
+            if (!HasNonEmptyWorld(sourceDir))
+            {
+                _log.LogWarning("Save source contains no non-empty World.csav: {Dir}", sourceDir);
+                return null;
+            }
+
             var snapshotPath = Path.Combine(_opts.SaveDir, $"{snapshotId}.zip");
             var tmpPath = snapshotPath + ".tmp";
-            CreateSaveGamesZip(sourceDir, tmpPath);
+            CreateSaveTreeZip(sourceDir, tmpPath);
             File.Move(tmpPath, snapshotPath);
 
             var size = new FileInfo(snapshotPath).Length;
@@ -255,7 +226,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
         }
     }
 
-    private static void CreateSaveGamesZip(string sourceDir, string destinationPath)
+    private static void CreateSaveTreeZip(string sourceDir, string destinationPath)
     {
         using var archive = System.IO.Compression.ZipFile.Open(
             destinationPath,
@@ -265,7 +236,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
         {
             var relativePath = Path.GetRelativePath(sourceDir, file).Replace('\\', '/');
             var info = new FileInfo(file);
-            if (info.Length == 0 && IsRootSaveSlotPath(relativePath))
+            if (info.Length == 0 && IsWorldPath(relativePath))
             {
                 continue;
             }
@@ -274,12 +245,30 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
         }
     }
 
-    private static bool IsRootSaveSlotPath(string relativePath) =>
-        System.Text.RegularExpressions.Regex.IsMatch(
-            relativePath,
-            @"^savegame_\d+\.sav$",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase |
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static bool IsWorldPath(string relativePath) =>
+        string.Equals(Path.GetFileName(relativePath), "World.csav", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool HasNonEmptyWorld(string sourceDir) =>
+        Directory.Exists(sourceDir) &&
+        Directory.EnumerateDirectories(sourceDir, "*", SearchOption.TopDirectoryOnly)
+            .Any(saveDir =>
+            {
+                var world = Path.Combine(saveDir, "World.csav");
+                return File.Exists(world) && new FileInfo(world).Length > 0;
+            });
+
+    internal static bool ZipHasValidSaveTree(string zipPath)
+    {
+        using var probe = ZipFile.OpenRead(zipPath);
+        return probe.Entries.Any(entry =>
+        {
+            if (entry.Length <= 0) return false;
+            var parts = entry.FullName.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length == 2
+                && parts[0] is not "." and not ".."
+                && string.Equals(parts[1], "World.csav", StringComparison.OrdinalIgnoreCase);
+        });
+    }
 
     private static async Task<string> Sha256OfAsync(string path, CancellationToken ct)
     {
@@ -294,8 +283,8 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
 
     /// <summary>
     /// Restore a previously-taken snapshot by ID. Takes a pre-restore
-    /// snapshot first (so the operation is reversible), kills the game, wipes
-    /// SaveGames, extracts the target snapshot zip, then releases the gate
+    /// snapshot first (so the operation is reversible), kills the game, swaps
+    /// the canonical Grounded2 save tree, then releases the gate
     /// so the supervisor relaunches Grounded 2 with the restored world.
     /// </summary>
     public async Task<bool> RestoreSnapshotAsync(string snapshotId, string requestedBy, CancellationToken ct = default)
@@ -316,8 +305,8 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
 
     /// <summary>
     /// Restore from a freshly-uploaded zip on disk (e.g. an imported vanilla
-    /// save or a cross-server transfer payload). The zip must contain the
-    /// contents of a SaveGames directory at its root (savegame_0.sav etc.).
+    /// save or a cross-server transfer payload). The zip must contain at least
+    /// one non-empty World.csav under a save directory.
     /// Takes a pre-restore snapshot, kills the game, swaps in the new files, then
     /// releases the supervisor gate.
     /// </summary>
@@ -330,12 +319,33 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             return false;
         }
 
+        // Reject the wrong folder before taking the server down. The archive must
+        // contain the contents of Saved\Grounded2: <save-folder>\World.csav.
+        try
+        {
+            if (!ZipHasValidSaveTree(zipPath))
+            {
+                _log.LogWarning("Restore rejected: zip {Path} contains no direct non-empty save-folder/World.csav", zipPath);
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Restore rejected: zip {Path} could not be opened", zipPath);
+            return false;
+        }
+
         using var _ = await _coordinator.BeginRestoreAsync(ct).ConfigureAwait(false);
 
         // 1. Stop Grounded 2 first. Taking a snapshot BEFORE the kill would
-        // capture whatever state Grounded 2 was mid-writing — which on a save
-        // tick is half a savegame_0.sav. Kill, wait for exit, then snap.
+        // capture a mixed set of World/HostPlayer/player files. Kill, wait for
+        // exact exit, then snapshot the stable tree.
         _coordinator.KillGame(TimeSpan.FromSeconds(20));
+        if (_coordinator.IsOwnedGameRunning())
+        {
+            _log.LogWarning("Restore aborted: the owned Grounded 2 process did not stop");
+            return false;
+        }
 
         // 2. Snapshot the now-stable state so a bad restore is reversible.
         var pre = await SnapshotAsync($"pre-restore:{requestedBy}", ct).ConfigureAwait(false);
@@ -345,41 +355,18 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             return false;
         }
 
-        // 3. Atomic SaveGames swap. Extract the incoming zip into a temp
-        // directory first; on success, rename the old SaveGames out of the
+        // 3. Atomic Grounded2-tree swap. Extract the incoming zip into a temp
+        // directory first; on success, rename the old tree out of the
         // way and rename the temp dir into place. If anything fails before
-        // the rename, the live SaveGames is untouched and the operation is
+        // the rename, the live Grounded2 tree is untouched and the operation is
         // a no-op rather than a corruption.
         try
         {
-            var saveGamesDir = Path.Combine(_opts.GameUserDir, "Saved", "SaveGames");
+            var saveGamesDir = GameSaveTree;
             Directory.CreateDirectory(Path.GetDirectoryName(saveGamesDir)!);
 
             var stagingDir = saveGamesDir + ".incoming-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             var prevDir = saveGamesDir + ".old-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-
-            // Validate the zip BEFORE touching live SaveGames. A zip with no
-            // savegame_*.sav at the root is almost certainly a customer
-            // zipping the wrong folder — refuse rather than wipe their world.
-            try
-            {
-                using var probe = System.IO.Compression.ZipFile.OpenRead(zipPath);
-                var hasSave = probe.Entries.Any(e =>
-                    e.Length > 0 &&
-                    System.Text.RegularExpressions.Regex.IsMatch(
-                        e.FullName, @"^savegame_\d+\.sav$",
-                        System.Text.RegularExpressions.RegexOptions.IgnoreCase));
-                if (!hasSave)
-                {
-                    _log.LogWarning("Restore rejected: zip {Path} contains no savegame_*.sav at the root", zipPath);
-                    return false;
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.LogWarning(ex, "Restore rejected: zip {Path} could not be opened", zipPath);
-                return false;
-            }
 
             bool savesMovedAside = false;
             try
@@ -389,6 +376,8 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 // escape the destination (zip-slip is rejected with an
                 // IOException), so the staging dir is the canonical sandbox.
                 System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, stagingDir, overwriteFiles: true);
+                if (!HasNonEmptyWorld(stagingDir))
+                    throw new InvalidDataException("Extracted restore contains no non-empty World.csav");
 
                 if (Directory.Exists(saveGamesDir))
                 {
@@ -403,7 +392,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             }
             catch (Exception ex)
             {
-                // Rollback. If we already renamed the live SaveGames out to
+                // Rollback. If we already renamed the live Grounded2 tree out to
                 // prevDir but couldn't get staging into place, restore the
                 // original so the customer doesn't end up with NO save dir.
                 if (savesMovedAside && Directory.Exists(prevDir) && !Directory.Exists(saveGamesDir))
@@ -412,7 +401,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                     catch (Exception rollbackEx)
                     {
                         _log.LogError(rollbackEx,
-                            "CRITICAL: rollback of SaveGames from {Prev} to {Live} failed after restore error; " +
+                            "CRITICAL: rollback of Grounded2 saves from {Prev} to {Live} failed after restore error; " +
                             "manual recovery may be required",
                             prevDir, saveGamesDir);
                     }
@@ -421,7 +410,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 {
                     try { Directory.Delete(stagingDir, recursive: true); } catch { }
                 }
-                _log.LogError(ex, "Restore failed; SaveGames rolled back from {Prev}", prevDir);
+                _log.LogError(ex, "Restore failed; Grounded2 saves rolled back from {Prev}", prevDir);
                 throw;
             }
 
@@ -431,7 +420,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 unixSeconds: nowUnix);
 
             // The FileSystemWatcher's directory handle was opened against
-            // the ORIGINAL SaveGames dir; Directory.Move above replaced
+            // the original Grounded2 tree; Directory.Move above replaced
             // that inode. Tear it down and re-arm against the new dir or
             // future auto-snapshots stop firing until LanternServer restart.
             try { _watcher?.Dispose(); } catch { }
@@ -443,7 +432,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "Restore failed while swapping SaveGames");
+            _log.LogError(ex, "Restore failed while swapping Grounded2 saves");
             return false;
         }
         // gate released by `using` — supervisor will relaunch Grounded 2 on its

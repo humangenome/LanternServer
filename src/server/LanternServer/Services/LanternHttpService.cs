@@ -20,6 +20,7 @@ namespace LanternServer.Services;
 ///
 /// Routes (all under <c>/api/v1</c>):
 ///   GET  /health                       — public, no auth
+///   POST /join/identity                — source-bound character choice; join-password HMAC when configured
 ///   GET  /info                         — instance + version
 ///   GET  /snapshots                    — list snapshots (auth)
 ///   GET  /snapshots/{id}/download      — stream zip (auth)
@@ -46,6 +47,7 @@ public sealed class LanternHttpService : BackgroundService
     private readonly PipeServerState _pipeState;
     private readonly InstanceIdentityProvider _identity;
     private readonly ChatService _chat;
+    private readonly IdentityChoiceService _identityChoices;
     private readonly byte[] _authKey;
     private readonly SemaphoreSlim _requestLimiter = new(MaxConcurrentRequests, MaxConcurrentRequests);
     // Sliding window of signatures we've already accepted, so a captured
@@ -62,7 +64,8 @@ public sealed class LanternHttpService : BackgroundService
         SaveOrchestratorService saves,
         PipeServerState pipeState,
         InstanceIdentityProvider identity,
-        ChatService chat)
+        ChatService chat,
+        IdentityChoiceService identityChoices)
     {
         _log = log;
         _opts = opts.Value;
@@ -71,11 +74,12 @@ public sealed class LanternHttpService : BackgroundService
         _pipeState = pipeState;
         _identity = identity;
         _chat = chat;
+        _identityChoices = identityChoices;
         // The HTTP API auth secret is SHA256(RconPassword). Same trust tier
         // as RCON — if the customer has set an RCON password, they already
         // expose admin control of the world. Deriving from RconPassword
         // means there's no second secret to manage. If RconPassword is
-        // empty, the HTTP API will not start.
+        // empty, only the public routes start; admin routes fail closed.
         _authKey = string.IsNullOrEmpty(_opts.RconPassword)
             ? Array.Empty<byte>()
             : SHA256.HashData(Encoding.UTF8.GetBytes(_opts.RconPassword));
@@ -89,10 +93,7 @@ public sealed class LanternHttpService : BackgroundService
             return;
         }
         if (_authKey.Length == 0)
-        {
-            _log.LogWarning("HTTP API disabled: RconPassword is empty (set it to enable launcher snapshot APIs)");
-            return;
-        }
+            _log.LogWarning("HTTP admin routes disabled: RconPassword is empty; public routes remain available");
 
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://+:{_opts.HttpPort}/api/v1/");
@@ -326,6 +327,24 @@ public sealed class LanternHttpService : BackgroundService
                         reason = b.Reason ?? "",
                     }),
                 });
+                return;
+            }
+
+            if (method == "POST" && path == "/api/v1/join/identity")
+            {
+                string rawBody;
+                try { rawBody = await ReadShortBodyAsync(req, maxBytes: 2048, ct).ConfigureAwait(false); }
+                catch (BodyTooLargeException)
+                {
+                    await WriteJsonAsync(res, 413, new { error = "payload too large" });
+                    return;
+                }
+                var result = _identityChoices.Accept(
+                    rawBody,
+                    req.Headers["X-Lantern-Join-Proof"],
+                    req.RemoteEndPoint?.Address);
+                await WriteJsonAsync(res, result.StatusCode,
+                    result.Ok ? new { ok = true } : new { ok = false, error = result.Error });
                 return;
             }
 
@@ -677,6 +696,7 @@ public sealed class LanternHttpService : BackgroundService
     /// </summary>
     private async Task<BufferedBody?> ValidateAuthAndBufferAsync(HttpListenerRequest req, CancellationToken ct)
     {
+        if (_authKey.Length == 0) return null;
         var tsHeader = req.Headers["X-Lantern-Timestamp"];
         var sigHeader = req.Headers["X-Lantern-Signature"];
         if (string.IsNullOrWhiteSpace(tsHeader) || string.IsNullOrWhiteSpace(sigHeader))

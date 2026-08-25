@@ -7,11 +7,9 @@ namespace LanternServer.Services;
 
 /// <summary>
 /// Coordinates between operations that need to pause Grounded 2 (snapshot restore,
-/// world wipe, in-place upgrade) and the supervisor loop that keeps it
-/// running. A restore acquires the gate, kills Grounded 2 if it's running, mutates
-/// SaveGames, then releases the gate. The supervisor waits on the gate
-/// before each relaunch so a new Grounded 2 doesn't spawn into a half-written
-/// world.
+/// world wipe, in-place upgrade) and the lifecycle owner that keeps it
+/// running. A restore acquires the gate, writes the optional external hold,
+/// kills Grounded 2, mutates the canonical save tree, then releases both.
 ///
 /// Kill scoping: only kills Grounded 2 instances whose executable lives under the
 /// configured <see cref="LanternServerOptions.GameInstallRoot"/> (or, when that
@@ -42,7 +40,31 @@ public sealed class G2RestartCoordinator
     public async Task<IDisposable> BeginRestoreAsync(CancellationToken ct)
     {
         await _restoreGate.WaitAsync(ct).ConfigureAwait(false);
-        return new Releaser(_restoreGate);
+        try
+        {
+            var holdPath = string.IsNullOrWhiteSpace(_opts.ExternalLifecycleHoldFile)
+                ? null
+                : Path.GetFullPath(_opts.ExternalLifecycleHoldFile);
+            string? holdToken = null;
+            if (holdPath is not null)
+            {
+                var holdDir = Path.GetDirectoryName(holdPath);
+                if (string.IsNullOrWhiteSpace(holdDir))
+                    throw new InvalidOperationException("ExternalLifecycleHoldFile must include a parent directory");
+                Directory.CreateDirectory(holdDir);
+                holdToken = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
+                var tmp = holdPath + ".tmp-" + Guid.NewGuid().ToString("N");
+                File.WriteAllText(tmp, holdToken);
+                File.Move(tmp, holdPath, overwrite: true);
+                _log.LogInformation("External lifecycle restore hold acquired: {Path}", holdPath);
+            }
+            return new Releaser(_restoreGate, holdPath, holdToken, _log);
+        }
+        catch
+        {
+            _restoreGate.Release();
+            throw;
+        }
     }
 
     public async Task WaitForNoRestoreAsync(CancellationToken ct)
@@ -252,6 +274,8 @@ public sealed class G2RestartCoordinator
     {
         if (!OperatingSystem.IsWindows()) return false;
 
+        if (PidFileOwnsRunningGame(_opts.GamePidFile)) return true;
+
         var installRoot = NormalizeForCompare(_opts.GameInstallRoot);
         var userDir = NormalizeForCompare(_opts.GameUserDir);
         if (installRoot is null && userDir is null)
@@ -280,6 +304,58 @@ public sealed class G2RestartCoordinator
         }
 
         return false;
+    }
+
+    private bool PidFileOwnsRunningGame(string? pidFile)
+    {
+        if (string.IsNullOrWhiteSpace(pidFile) || !File.Exists(pidFile)) return false;
+        int pid;
+        try
+        {
+            if (!int.TryParse(File.ReadAllText(pidFile).Trim(), out pid) || pid <= 0) return false;
+        }
+        catch
+        {
+            // A live writer or unreadable ownership file is unknown, not proof of a stopped game.
+            return true;
+        }
+
+        Process? process = null;
+        try
+        {
+            process = Process.GetProcessById(pid);
+            if (process.HasExited) return false;
+            var name = process.ProcessName ?? "";
+            if (!G2ProcessNames.Any(allowed =>
+                    string.Equals(name, allowed, StringComparison.OrdinalIgnoreCase)))
+                return false;
+
+            var logsDir = Path.GetDirectoryName(Path.GetFullPath(pidFile));
+            var expectedRoot = NormalizeForCompare(logsDir is null ? null : Path.GetDirectoryName(logsDir));
+            if (expectedRoot is null) return true;
+
+            string? exePath;
+            try { exePath = process.MainModule?.FileName; }
+            catch { return true; }
+            if (string.IsNullOrWhiteSpace(exePath)) return true;
+
+            var normalizedExe = NormalizeForCompare(exePath);
+            if (normalizedExe is null) return true;
+            var sep = Path.DirectorySeparatorChar;
+            return normalizedExe.StartsWith(expectedRoot + sep, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+        finally
+        {
+            try { process?.Dispose(); } catch { }
+        }
     }
 
     private static bool OwnsProcess(Process p, string? installRoot, string? userDir)
@@ -335,11 +411,39 @@ public sealed class G2RestartCoordinator
     private sealed class Releaser : IDisposable
     {
         private readonly SemaphoreSlim _s;
+        private readonly string? _holdPath;
+        private readonly string? _holdToken;
+        private readonly ILogger _log;
         private int _disposed;
-        public Releaser(SemaphoreSlim s) => _s = s;
+        public Releaser(SemaphoreSlim s, string? holdPath, string? holdToken, ILogger log)
+        {
+            _s = s;
+            _holdPath = holdPath;
+            _holdToken = holdToken;
+            _log = log;
+        }
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0) _s.Release();
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            try
+            {
+                if (_holdPath is not null && _holdToken is not null && File.Exists(_holdPath)
+                    && string.Equals(File.ReadAllText(_holdPath).Trim(), _holdToken, StringComparison.Ordinal))
+                {
+                    File.Delete(_holdPath);
+                    _log.LogInformation("External lifecycle restore hold released: {Path}", _holdPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Leave a failed-to-remove hold in place. A stopped server is safer than
+                // relaunching over a restore whose coordination state is uncertain.
+                _log.LogError(ex, "External lifecycle restore hold could not be released: {Path}", _holdPath);
+            }
+            finally
+            {
+                _s.Release();
+            }
         }
     }
 }

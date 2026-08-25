@@ -66,9 +66,16 @@ public sealed class LanternServerOptions
     /// </summary>
     public string LanternAuthPassword { get; set; } = "";
 
+    /// <summary>
+    /// Instance-local drop directory for short-lived, authenticated character
+    /// choices sent by the joining launcher. Relative paths resolve beneath the
+    /// LanternServer executable directory.
+    /// </summary>
+    public string IdentityChoiceDirectory { get; set; } = "identity-choices";
+
     public string ServerName { get; set; } = "";
 
-    public string GameInstallRoot { get; set; } = @"C:\Lantern\game";
+    public string GameInstallRoot { get; set; } = "";
 
     /// <summary>
     /// Optional direct path to the Grounded 2 executable. Leave empty to
@@ -94,6 +101,14 @@ public sealed class LanternServerOptions
     /// </summary>
     public string GamePidFile { get; set; } = "";
 
+    /// <summary>
+    /// Optional marker shared with an external lifecycle supervisor. Restore writes
+    /// an owner token here before stopping the game and removes that exact token only
+    /// after the atomic save swap completes. The external supervisor must not relaunch
+    /// Grounded 2 while the marker's owning LanternServer process is alive.
+    /// </summary>
+    public string ExternalLifecycleHoldFile { get; set; } = "";
+
     /// <summary>Freshness window for g2_sshost roster and optional plugin heartbeats.</summary>
     public int PluginHeartbeatTimeoutSeconds { get; set; } = 30;
 
@@ -105,7 +120,7 @@ public sealed class LanternServerOptions
     public int MaxPlayers { get; set; } = 4;
 
     /// <summary>
-    /// Take a snapshot zip of the SaveGames dir into <see cref="SaveDir"/>
+    /// Take a snapshot zip of the canonical Saved\Grounded2 tree into <see cref="SaveDir"/>
     /// on every auto-save (via FileSystemWatcher). Useful for self-hosters
     /// who want a rollback option. Hosting providers (e.g. SurvivalServers)
     /// run their own backup chain and should set this to false to avoid

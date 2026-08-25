@@ -102,12 +102,24 @@ public sealed class RconHostedService : IHostedService
         var arg = sub.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(arg) || arg == "snapshot")
         {
-            // The game host auto-saves to <userdir>/Saved/SaveGames every ~60s.
-            // We snapshot the on-disk save file directly; the plugin SaveQuiesce
-            // ack is not required because the game's own save writer is atomic
-            // (writes to temp then renames). The FileSystemWatcher in
-            // SaveOrchestratorService handles auto-snapshots; this RCON path is
-            // for admin-triggered.
+            // WARNING: this snapshots whatever is already on disk. It does NOT ask the game to
+            // save, and on Grounded 2 there may be nothing on disk to snapshot.
+            //
+            // This comment used to claim "the game host auto-saves to <userdir>/Saved/SaveGames
+            // every ~60s". That was inherited from Beacon and is wrong twice over, and it is part
+            // of why a data-loss defect hid for months behind a reassuring sentence:
+            //   * the interval is not 60. MaineGameUserSettings carries AutosaveInterval=5.0 and
+            //     AutosavesNumber=3.0, so the game is configured to autosave every 5 keeping 3;
+            //   * and it does not happen at all. Across 27 Active instances, not one has ever
+            //     produced an (AUTOSAVE-...) directory. The config is on and nothing calls it.
+            // Grounded 2 commits its world on player LOGOUT ((LOGOUT-SAVE) is ESaveGameType::Logout
+            // rendered into a directory name), so between logouts a snapshot here can capture an
+            // empty directory and report success.
+            //
+            // The fix under way is a host-side caller for SaveLoadManager:RequestAutoSave; when that
+            // lands this path becomes trustworthy. Until then, treat a snapshot as "whatever was on
+            // disk", never as "the current world".
+            // See goals/2026-08-15-graceful-stop-presave/design.md.
             var rec = await _saves.SnapshotAsync("rcon").ConfigureAwait(false);
             return rec is null
                 ? "snapshot failed (check lantern log; save dir likely missing)"

@@ -104,6 +104,50 @@ public sealed class RestoreHoldTests
         }));
 }
 
+public sealed class RestoreKeepsAutoSnapshotsOffTests
+{
+    [Fact]
+    public async Task Restore_DoesNotTurnOnAutoSnapshots_WhenTheyAreDisabled()
+    {
+        using var temp = new TempDir("lantern-restore-watcher-tests-");
+        var userDir = Path.Combine(temp.Path, "UserDir");
+        var save = Path.Combine(userDir, "Saved", "Grounded2", "(ID-LIVE)(AUTOSAVE-0)");
+        Directory.CreateDirectory(save);
+        File.WriteAllText(Path.Combine(save, "World.csav"), "live world");
+
+        var zip = Path.Combine(temp.Path, "incoming.zip");
+        using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+        {
+            var world = archive.CreateEntry("(ID-OLD)(AUTOSAVE-0)/World.csav");
+            using var writer = new StreamWriter(world.Open());
+            writer.Write("restored world");
+        }
+
+        var opts = new LanternServerOptions
+        {
+            GameInstallRoot = "",
+            GameUserDir = userDir,
+            GamePidFile = "",
+            SaveDir = Path.Combine(temp.Path, "Saves"),
+            HmacKeyPath = Path.Combine(temp.Path, "data", "hmac.key"),
+            ExternalLifecycleHoldFile = Path.Combine(temp.Path, "Logs", "g2_restore.hold"),
+            SnapshotsEnabled = false,
+        };
+        Directory.CreateDirectory(Path.Combine(temp.Path, "data"));
+        var coordinator = new G2RestartCoordinator(NullLogger<G2RestartCoordinator>.Instance, Options.Create(opts));
+        using var svc = new SaveOrchestratorService(NullLogger<SaveOrchestratorService>.Instance, Options.Create(opts),
+            new PipeServerState(NullLogger<PipeServerState>.Instance), coordinator);
+
+        (await svc.RestoreFromZipPathAsync(zip, "test", "restore:test")).Should().BeTrue();
+
+        File.ReadAllText(Path.Combine(userDir, "Saved", "Grounded2", "(ID-OLD)(AUTOSAVE-0)", "World.csav")).Should().Be("restored world");
+        svc.ListSnapshots().Should().HaveCount(1, "only the pre-restore snapshot is taken");
+        typeof(SaveOrchestratorService)
+            .GetField("_watcher", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(svc).Should().BeNull("a restore must not arm the autosave watcher when snapshots are off");
+    }
+}
+
 internal sealed class TempDir : IDisposable
 {
     public TempDir(string prefix)

@@ -423,9 +423,12 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             // the original Grounded2 tree; Directory.Move above replaced
             // that inode. Tear it down and re-arm against the new dir or
             // future auto-snapshots stop firing until LanternServer restart.
+            // Only when auto-snapshots are on: re-arming unconditionally turned them on after
+            // every restore on hosts configured with SnapshotsEnabled=false (managed hosting),
+            // until LanternServer restarted. Seen on a test server on 2026-10-12.
             try { _watcher?.Dispose(); } catch { }
             _watcher = null;
-            TryStartFileWatcher();
+            if (_opts.SnapshotsEnabled) TryStartFileWatcher();
 
             _log.LogInformation("Restore complete from {Zip}; pre-snapshot {Id}", zipPath, pre.SnapshotId);
             return true;

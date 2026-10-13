@@ -20,6 +20,9 @@ namespace LanternServer.Services;
 ///
 /// Routes (all under <c>/api/v1</c>):
 ///   GET  /health                       — public, no auth
+///   POST /join/pass                    — public; the player's app proves the join password before the game
+///                                        connects (HMAC, never the password) and gets a pass token its
+///                                        join mod presents over the game connection
 ///   POST /join/identity                — source-bound character choice; join-password HMAC when configured
 ///   GET  /info                         — instance + version
 ///   GET  /snapshots                    — list snapshots (auth)
@@ -327,6 +330,26 @@ public sealed class LanternHttpService : BackgroundService
                         reason = b.Reason ?? "",
                     }),
                 });
+                return;
+            }
+
+            if (method == "POST" && path == "/api/v1/" + Lantern.Protocol.JoinPass.Route)
+            {
+                string rawBody;
+                try { rawBody = await ReadShortBodyAsync(req, maxBytes: 1024, ct).ConfigureAwait(false); }
+                catch (BodyTooLargeException)
+                {
+                    await WriteJsonAsync(res, 413, new { error = "payload too large" });
+                    return;
+                }
+                var pass = _identityChoices.AcceptPass(
+                    rawBody,
+                    req.Headers[Lantern.Protocol.JoinPass.ProofHeader],
+                    req.RemoteEndPoint?.Address);
+                if (pass.Ok)
+                    await WriteJsonAsync(res, 200, new { ok = true, open = pass.OpenServer, expires_in = pass.ExpiresInSeconds, pass = pass.Token ?? "" });
+                else
+                    await WriteJsonAsync(res, pass.StatusCode, new { ok = false, error = pass.Error });
                 return;
             }
 

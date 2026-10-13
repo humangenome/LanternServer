@@ -24,7 +24,7 @@ Answers Source A2S query on the query port, so server lists, monitoring tools an
 A Source-compatible RCON listener with `help`, `status`, `players`, `ping`, `save snapshot`, `save list`, `say`, `announce` and `motd`. The Lantern app's Console tab uses it.
 
 ### 🔐 Admin HTTP API
-Health, info, players, the mod manifest, chat, map state, and the snapshot list, download, restore and import routes. Admin routes are HMAC-signed with a key derived from the RCON password.
+Health, info, players, the mod manifest, the join-password check the Lantern app makes before it starts the game, chat, map state, and the snapshot list, download, restore and import routes. Admin routes are HMAC-signed with a key derived from the RCON password.
 
 ### 🖥 Runtime watch
 Reads the in-game runtime's heartbeat and player roster, reports `game=running|stopped runtime=ready|starting|stale` in RCON `status`, and coordinates save operations with the host's Grounded 2 launch wrapper.

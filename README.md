@@ -34,26 +34,18 @@ The runtime loads UE4SS Lua and native mods from the server package's `ue4ss\Mod
 
 ## Requirements
 
-- Windows 10/11 or Windows Server, x64
-- Grounded 2 installed on the host from your own Steam account, with Steam logged in (Lantern does not ship the game)
-- Open or forwarded ports for gameplay, query, RCON and admin HTTP
-
-The game runs headless on the WARP software renderer, so no GPU is required. Release builds are self-contained; no separate .NET install is needed.
+- Players: the Steam version of Grounded 2 on a Windows PC and the [Lantern app](https://github.com/HumanGenome/Lantern)
+- Building this source: the .NET 8 SDK
 
 ## Installation
 
 ### Rent a server
 [SurvivalServers.com Grounded 2 hosting](https://www.survivalservers.com/services/game_servers/grounded2/?utm_source=github&utm_medium=readme_install&utm_campaign=lanternserver) ships the complete Lantern server already installed and handles ports, updates and panel integration.
 
-### Self-host
-1. Download `LanternServer-v<version>.zip` from the [latest release](https://github.com/HumanGenome/LanternServer/releases/latest).
-2. Extract it to a stable folder on the Windows host. It contains `LanternServer\` (the service and `appsettings.json`), `ue4ss\` (the in-game runtime), `redist\` (the WARP renderer and the UE4SS proxy), `engine-ini\` (host and client templates), `host-instance.ps1` and `steam_appid.txt`.
-3. Install Grounded 2 on the host and keep Steam logged in.
-4. Edit `LanternServer\appsettings.json`.
-5. Open or forward the ports below. The gameplay UDP port also needs a Windows Defender inbound allow rule, or players cannot reach the server.
-6. Start Grounded 2 with the bundled `host-instance.ps1` launch wrapper, then run `LanternServer\LanternServer.exe` for query, RCON and the admin API.
+### Self-hosting
+Not supported yet. The release zip is the server runtime that rented Lantern servers run, and their hosting panel does the setup around it for each server: it puts the runtime into the game folder, writes the game's launch settings, and starts and watches the game the way the runtime expects. The bundled `host-instance.ps1` does none of that. Started the way this page used to describe (2026-10-19 test), Grounded 2 never opened a server port and LanternServer reported the game as down, so nobody could join.
 
-Players connect with the Lantern app to `<host>:<GameplayPort>`.
+Players connect with the Lantern app to `<host>:<GameplayPort>` of a running server.
 
 ## Ports
 

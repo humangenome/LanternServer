@@ -151,9 +151,25 @@ public sealed class RconHostedService : IHostedService
         return $"instance={_opts.InstanceId} game={(online ? "running" : "stopped")} runtime={runtime} players={_state.EffectivePlayerCount}";
     }
 
-    private string BuildPlayers()
+    private string BuildPlayers() =>
+        FormatPlayers(_state.Players, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+    // One line per player: name and minutes since they joined (the same list A2S reports).
+    // Control characters are dropped so a name cannot break the console's lines.
+    internal static string FormatPlayers(IReadOnlyList<PlayerSnapshot> players, long nowUnixMs)
     {
-        var n = _state.EffectivePlayerCount;
-        return n == 0 ? "no players online" : $"{n} player(s) online (per-player names land in Phase 2)";
+        if (players.Count == 0) return "no players online";
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine(players.Count == 1 ? "1 player online" : $"{players.Count} players online");
+        foreach (var p in players)
+        {
+            var name = new string((p.DisplayName ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+            if (name.Length == 0) name = "(no name yet)";
+            var minutes = p.ConnectedAtUnixMs > 0 && nowUnixMs > p.ConnectedAtUnixMs
+                ? (nowUnixMs - p.ConnectedAtUnixMs) / 60000
+                : 0;
+            sb.AppendLine($"  {name}  {minutes} min");
+        }
+        return sb.ToString().TrimEnd();
     }
 }

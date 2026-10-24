@@ -21,7 +21,7 @@ Takes a snapshot of the world every time the game autosaves (`SnapshotsEnabled`,
 Answers Source A2S query on the query port, so server lists, monitoring tools and bots can read the server name, map and player count.
 
 ### 🛠 Source RCON
-A Source-compatible RCON listener with `help`, `status`, `players`, `ping`, `save snapshot`, `save list`, `say`, `announce` and `motd`. The Lantern app's Console tab uses it.
+A Source-compatible RCON listener with `help`, `status`, `players`, `ping`, `save snapshot` and `save list`. The Lantern app's Console tab uses it.
 
 ### 🔐 Admin HTTP API
 Health, info, players, the mod manifest, the join-password check the Lantern app makes before it starts the game, chat, map state, and the snapshot list, download, restore and import routes. Admin routes are HMAC-signed with a key derived from the RCON password.

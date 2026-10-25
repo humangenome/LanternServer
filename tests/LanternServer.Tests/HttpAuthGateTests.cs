@@ -187,16 +187,33 @@ public sealed class HttpAuthGateTests
     }
 
     [Fact]
-    public async Task Live_SignedRequests_WorkWithAndWithoutTheHashHeader_AndAReplayIsRefused()
+    public async Task Live_SignedRequests_ReachTheHandlerWithAndWithoutTheHashHeader_AndAReplayIsRefused()
     {
         await using var h = await LiveHarness.StartAsync();
         // (two different bodies: an identical request in the same second is a replay)
-        (await h.SignedAsync("POST", "/api/v1/chat/say", Encoding.UTF8.GetBytes("{\"msg\":\"hello\"}"), sendSha: false)).Should().Be(200);
-        (await h.SignedAsync("POST", "/api/v1/chat/say", Encoding.UTF8.GetBytes("{\"msg\":\"hello again\"}"), sendSha: true)).Should().Be(200);
+        // The handler reports that chat is unsupported; 501 proves auth accepted the request.
+        (await h.SignedAsync("POST", "/api/v1/chat/say", Encoding.UTF8.GetBytes("{\"msg\":\"hello\"}"), sendSha: false)).Should().Be(501);
+        (await h.SignedAsync("POST", "/api/v1/chat/say", Encoding.UTF8.GetBytes("{\"msg\":\"hello again\"}"), sendSha: true)).Should().Be(501);
 
         var ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         (await h.SignedAsync("GET", "/api/v1/info", Array.Empty<byte>(), sendSha: false, ts: ts)).Should().Be(200);
         (await h.SignedAsync("GET", "/api/v1/info", Array.Empty<byte>(), sendSha: false, ts: ts)).Should().Be(401);
+    }
+
+    [Theory]
+    [InlineData("/api/v1/chat/say")]
+    [InlineData("/api/v1/chat/motd")]
+    public async Task Live_UnsupportedMessagesAreRefusedWithoutChangingChatState(string path)
+    {
+        await using var h = await LiveHarness.StartAsync();
+        var before = h.Chat.GetRecent(0, 100).ToArray();
+        var motd = h.Chat.GetMotd();
+
+        (await h.SignedAsync("POST", path, Encoding.UTF8.GetBytes("{\"msg\":\"must not be stored\"}"), sendSha: true))
+            .Should().Be(501);
+
+        h.Chat.GetRecent(0, 100).Should().BeEquivalentTo(before);
+        h.Chat.GetMotd().Should().Be(motd);
     }
 
     [Fact]
@@ -276,10 +293,11 @@ public sealed class HttpAuthGateTests
         public int Port { get; }
         public byte[] Key { get; }
         public string SaveDir { get; }
+        public ChatService Chat { get; }
 
-        private LiveHarness(TempDir temp, LanternHttpService service, int port, byte[] key, string saveDir)
+        private LiveHarness(TempDir temp, LanternHttpService service, int port, byte[] key, string saveDir, ChatService chat)
         {
-            _temp = temp; _service = service; Port = port; Key = key; SaveDir = saveDir;
+            _temp = temp; _service = service; Port = port; Key = key; SaveDir = saveDir; Chat = chat;
         }
 
         public static async Task<LiveHarness> StartAsync()
@@ -301,12 +319,13 @@ public sealed class HttpAuthGateTests
             var pipe = new PipeServerState(NullLogger<PipeServerState>.Instance);
             var saves = new SaveOrchestratorService(NullLogger<SaveOrchestratorService>.Instance, o, pipe,
                 new G2RestartCoordinator(NullLogger<G2RestartCoordinator>.Instance, o));
+            var chat = new ChatService(NullLogger<ChatService>.Instance, new FixedMonitor(opts));
             var service = new LanternHttpService(
                 NullLogger<LanternHttpService>.Instance, o, new ConfigurationBuilder().Build(), saves, pipe,
-                new InstanceIdentityProvider(o), new ChatService(NullLogger<ChatService>.Instance, new FixedMonitor(opts)),
+                new InstanceIdentityProvider(o), chat,
                 new IdentityChoiceService(NullLogger<IdentityChoiceService>.Instance, o));
             await service.StartAsync(CancellationToken.None);
-            var h = new LiveHarness(temp, service, port, SHA256.HashData(Encoding.UTF8.GetBytes(opts.RconPassword)), opts.SaveDir);
+            var h = new LiveHarness(temp, service, port, SHA256.HashData(Encoding.UTF8.GetBytes(opts.RconPassword)), opts.SaveDir, chat);
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
             for (int i = 0; i < 50; i++)
             {

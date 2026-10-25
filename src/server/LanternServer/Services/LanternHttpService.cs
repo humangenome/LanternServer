@@ -620,30 +620,15 @@ public sealed class LanternHttpService : BackgroundService
 
             if (method == "POST" && path == "/api/v1/chat/say")
             {
-                var sayReq = await ParseJsonBodyAsync<ChatSayRequest>(body, ct).ConfigureAwait(false);
                 body.Dispose();
-                if (sayReq is null || string.IsNullOrWhiteSpace(sayReq.Msg))
-                {
-                    await WriteJsonAsync(res, 400, new { error = "msg required" });
-                    return;
-                }
-                var entry = _chat.BroadcastFromServer(
-                    sayReq.Msg, sayReq.Channel, sayReq.Color, sayReq.Sender);
-                await WriteJsonAsync(res, 200, new { ok = true, ts = entry.Ts });
+                await WriteJsonAsync(res, 501, new { ok = false, error = RconHostedService.NoChatReply });
                 return;
             }
 
             if (method == "POST" && path == "/api/v1/chat/motd")
             {
-                var motdReq = await ParseJsonBodyAsync<MotdRequest>(body, ct).ConfigureAwait(false);
                 body.Dispose();
-                if (motdReq is null)
-                {
-                    await WriteJsonAsync(res, 400, new { error = "json body required" });
-                    return;
-                }
-                var ok = _chat.SetMotd(motdReq.Msg ?? "");
-                await WriteJsonAsync(res, ok ? 200 : 500, new { ok });
+                await WriteJsonAsync(res, 501, new { ok = false, error = RconHostedService.NoMotdReply });
                 return;
             }
 
@@ -961,19 +946,6 @@ public sealed class LanternHttpService : BackgroundService
         {
             return null;
         }
-    }
-
-    private sealed class ChatSayRequest
-    {
-        public string Msg { get; set; } = "";
-        public string? Channel { get; set; }
-        public string? Color { get; set; }
-        public string? Sender { get; set; }
-    }
-
-    private sealed class MotdRequest
-    {
-        public string? Msg { get; set; }
     }
 
     private static async Task<string> ReadShortBodyAsync(HttpListenerRequest req, int maxBytes, CancellationToken ct)

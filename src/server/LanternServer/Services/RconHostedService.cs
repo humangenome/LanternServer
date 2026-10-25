@@ -17,21 +17,18 @@ public sealed class RconHostedService : IHostedService
     private readonly LanternServerOptions _opts;
     private readonly PipeServerState _state;
     private readonly SaveOrchestratorService _saves;
-    private readonly ChatService _chat;
     private RconServer? _server;
 
     public RconHostedService(
         ILogger<RconHostedService> log,
         IOptions<LanternServerOptions> opts,
         PipeServerState state,
-        SaveOrchestratorService saves,
-        ChatService chat)
+        SaveOrchestratorService saves)
     {
         _log = log;
         _opts = opts.Value;
         _state = state;
         _saves = saves;
-        _chat = chat;
     }
 
     public Task StartAsync(CancellationToken ct)
@@ -52,7 +49,7 @@ public sealed class RconHostedService : IHostedService
         if (_server is not null) await _server.StopAsync().ConfigureAwait(false);
     }
 
-    private async Task<string> ExecuteAsync(string command)
+    internal async Task<string> ExecuteAsync(string command)
     {
         var trimmed = command.Trim();
         if (string.IsNullOrEmpty(trimmed)) return "";
@@ -65,61 +62,33 @@ public sealed class RconHostedService : IHostedService
         _log.LogDebug("RCON dispatch: cmd={Cmd} argLen={ArgLen}", head, rest.Length);
         return head switch
         {
-            "help"     => "commands: status, players, ping, save snapshot, save list, say <msg>, announce <msg>, motd [msg]",
+            "help"     => HelpText,
             "status"   => BuildStatus(),
             "players"  => BuildPlayers(),
             "ping"     => "pong",
             "save"     => await HandleSaveAsync(rest).ConfigureAwait(false),
             "snapshot" => await HandleSaveAsync("snapshot").ConfigureAwait(false),
-            "say"      => HandleChat(rest, "system"),
-            "announce" => HandleChat(rest, "admin"),
-            "motd"     => HandleMotd(rest),
+            // No Lantern piece shows chat or a message of the day to players (the chat plane came over
+            // from Beacon, where the client overlay reads it; nothing in Grounded 2 does). Say so
+            // instead of answering "chat ok" for a message nobody will ever see.
+            "say"      => NoChatReply,
+            "announce" => NoChatReply,
+            "motd"     => NoMotdReply,
             _          => $"unknown rcon command: {head} (try: help)",
         };
     }
 
-    private string HandleChat(string msg, string channel)
-    {
-        var clean = (msg ?? "").Trim();
-        if (string.IsNullOrEmpty(clean)) return $"usage: {(channel == "admin" ? "announce" : "say")} <message>";
-        var entry = _chat.BroadcastFromServer(clean, channel: channel, sender: "Server");
-        return $"chat ok ({channel}): {entry.Msg}";
-    }
-
-    private string HandleMotd(string sub)
-    {
-        var trimmed = (sub ?? "").Trim();
-        if (string.IsNullOrEmpty(trimmed))
-        {
-            var cur = _chat.GetMotd();
-            return string.IsNullOrEmpty(cur) ? "motd is empty" : $"motd: {cur}";
-        }
-        return _chat.SetMotd(trimmed) ? "motd updated" : "motd update failed (check log)";
-    }
+    internal const string HelpText = "commands: status, players, ping, save snapshot, save list";
+    internal const string NoChatReply = "Grounded 2 servers have no chat yet: players would not see this, so nothing was sent.";
+    internal const string NoMotdReply = "Grounded 2 servers have no message of the day yet: players never see one.";
 
     private async Task<string> HandleSaveAsync(string sub)
     {
         var arg = sub.Trim().ToLowerInvariant();
         if (string.IsNullOrEmpty(arg) || arg == "snapshot")
         {
-            // WARNING: this snapshots whatever is already on disk. It does NOT ask the game to
-            // save, and on Grounded 2 there may be nothing on disk to snapshot.
-            //
-            // This comment used to claim "the game host auto-saves to <userdir>/Saved/SaveGames
-            // every ~60s". That was inherited from Beacon and is wrong twice over, and it is part
-            // of why a data-loss defect hid for months behind a reassuring sentence:
-            //   * the interval is not 60. MaineGameUserSettings carries AutosaveInterval=5.0 and
-            //     AutosavesNumber=3.0, so the game is configured to autosave every 5 keeping 3;
-            //   * and it does not happen at all. Across 27 Active instances, not one has ever
-            //     produced an (AUTOSAVE-...) directory. The config is on and nothing calls it.
-            // Grounded 2 commits its world on player LOGOUT ((LOGOUT-SAVE) is ESaveGameType::Logout
-            // rendered into a directory name), so between logouts a snapshot here can capture an
-            // empty directory and report success.
-            //
-            // The fix under way is a host-side caller for SaveLoadManager:RequestAutoSave; when that
-            // lands this path becomes trustworthy. Until then, treat a snapshot as "whatever was on
-            // disk", never as "the current world".
-            // See goals/2026-08-15-graceful-stop-presave/design.md.
+            // Archives the files already on disk; this does not request a fresh
+            // game save. A successful snapshot is not proof of current progress.
             var rec = await _saves.SnapshotAsync("rcon").ConfigureAwait(false);
             return rec is null
                 ? "snapshot failed (check lantern log; save dir likely missing)"

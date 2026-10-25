@@ -1,5 +1,8 @@
 using Lantern.Protocol;
+using LanternServer.Configuration;
 using LanternServer.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace LanternServer.Tests;
 
@@ -30,6 +33,37 @@ public sealed class RconPlayersTests
         Assert.Equal(4, lines.Length);
         Assert.DoesNotContain("Phase 2", text);
     }
+
+    // Nothing in Lantern shows chat or a message of the day to players (the chat plane came over
+    // from Beacon). The console must not offer them or answer "chat ok" for a message nobody sees.
+    [Fact]
+    public async Task HelpDoesNotOfferUndeliveredMessages()
+    {
+        var reply = await CreateCommandService().ExecuteAsync("help");
+        Assert.DoesNotContain("say", reply);
+        Assert.DoesNotContain("announce", reply);
+        Assert.DoesNotContain("motd", reply);
+        Assert.Contains("players", reply);
+        Assert.Contains("save snapshot", reply);
+    }
+
+    [Theory]
+    [InlineData("say hello", "nothing was sent")]
+    [InlineData("ANNOUNCE hello", "nothing was sent")]
+    [InlineData("motd hello", "never see")]
+    [InlineData("motd", "never see")]
+    public async Task UnsupportedMessageCommandsNeverReportDelivery(string command, string expected)
+    {
+        var reply = await CreateCommandService().ExecuteAsync(command);
+        Assert.Contains(expected, reply);
+        Assert.DoesNotContain("ok", reply);
+    }
+
+    private static RconHostedService CreateCommandService() => new(
+        NullLogger<RconHostedService>.Instance,
+        Options.Create(new LanternServerOptions()),
+        new PipeServerState(NullLogger<PipeServerState>.Instance),
+        null!); // These command paths must not touch the save service.
 
     [Fact]
     public void OnePlayerIsSingular()

@@ -31,6 +31,7 @@ public sealed class RosterFileWatcherService : BackgroundService
     private readonly string _runtimeHeartbeatPath;
     private DateTimeOffset _lastReadAt = DateTimeOffset.MinValue;
     private long _lastFileSize = -1;
+    private Dictionary<string, long> _connectedAt = new(StringComparer.OrdinalIgnoreCase);
 
     public RosterFileWatcherService(ILogger<RosterFileWatcherService> log, PipeServerState state)
         : this(log, state, AppContext.BaseDirectory)
@@ -89,9 +90,6 @@ public sealed class RosterFileWatcherService : BackgroundService
         if (!File.Exists(_rosterPath)) return;
         var info = new FileInfo(_rosterPath);
         if (info.Length == _lastFileSize && info.LastWriteTimeUtc <= _lastReadAt) return;
-        _lastFileSize = info.Length;
-        _lastReadAt = info.LastWriteTimeUtc;
-
         string json;
         try
         {
@@ -111,16 +109,37 @@ public sealed class RosterFileWatcherService : BackgroundService
         }
         if (parsed?.Players is null) return;
 
+        // Older host mods write the poll time as ConnectedAt on every update. Keep
+        // the first observation for each uninterrupted session, while still using
+        // an earlier connection time supplied by a newer producer.
+        var observedAt = parsed.UnixMs > 0
+            ? parsed.UnixMs
+            : new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+        var currentConnections = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         var snapshots = new List<PlayerSnapshot>(parsed.Players.Count);
         foreach (var p in parsed.Players)
         {
+            var key = !string.IsNullOrWhiteSpace(p.LanternUserId)
+                ? "id:" + p.LanternUserId
+                : "name:" + (p.DisplayName ?? "");
+            var connectedAt = p.ConnectedAtUnixMs > 0 && p.ConnectedAtUnixMs <= observedAt
+                ? p.ConnectedAtUnixMs
+                : observedAt;
+            if (_connectedAt.TryGetValue(key, out var previous))
+                connectedAt = Math.Min(connectedAt, previous);
+            currentConnections[key] = connectedAt;
             snapshots.Add(new PlayerSnapshot(
                 LanternUserId: p.LanternUserId ?? "",
                 DisplayName: p.DisplayName ?? "Unknown",
-                ConnectedAtUnixMs: p.ConnectedAtUnixMs,
+                ConnectedAtUnixMs: connectedAt,
                 LastPacketUnixMs: p.LastPacketUnixMs,
                 PingMs: p.PingMs));
         }
+        // Only a complete, valid roster ends missing players' sessions. A partial
+        // write or read failure must be retried even if its timestamp is unchanged.
+        _connectedAt = currentConnections;
+        _lastFileSize = info.Length;
+        _lastReadAt = info.LastWriteTimeUtc;
         _state.SetPlayers(snapshots);
         _state.LastReportedPlayerCount = snapshots.Count;
         // Backward compatibility for older host mods that do not yet emit the dedicated file.

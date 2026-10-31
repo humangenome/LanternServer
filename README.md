@@ -6,7 +6,7 @@
 [![Game](https://img.shields.io/badge/Game-Grounded_2-darkgreen.svg)](https://store.steampowered.com/app/2661300/)
 [![Client App](https://img.shields.io/badge/Client_App-Lantern-brightgreen.svg)](https://github.com/HumanGenome/Lantern)
 
-Grounded 2 has no dedicated server. LanternServer is the server side of [Lantern](https://github.com/HumanGenome/Lantern), which adds one: together with the Lantern runtime in the release zip it makes a Grounded 2 dedicated server that runs the game headless on a Windows machine with a public IP and port. LanternServer itself is the control service next to the game: world snapshots and restores, Source A2S query, Source RCON and the admin HTTP API the Lantern app uses.
+Grounded 2 has no dedicated server. LanternServer is the server half of [Lantern](https://github.com/HumanGenome/Lantern): its release zip runs Grounded 2 as a dedicated server on a Windows machine with a public IP and port, and players join it with the Lantern app. This repo is the .NET control service in that zip.
 
 Players join with the [Lantern app](https://github.com/HumanGenome/Lantern) and the Steam version of Grounded 2 on Windows. Stock Grounded 2 cannot connect to a Lantern server directly.
 
@@ -14,20 +14,20 @@ The **release zip is the complete server**: this .NET service plus the in-game r
 
 ## Features
 
-### 💾 World snapshots
+### 💾 World backups
 Takes a snapshot of the world every time the game autosaves (`SnapshotsEnabled`, on by default) and whenever an admin asks. A restore swaps the save folder in one step, so a failed restore never leaves a half-written world, and an uploaded Grounded 2 save can be restored the same way.
 
-### 📡 Source query
+### 📡 Server query
 Answers Source A2S query on the query port, so server lists, monitoring tools and bots can read the server name, map and player count.
 
-### 🛠 Source RCON
+### 🛠 RCON
 A Source-compatible RCON listener with `help`, `status`, `players`, `ping`, `save snapshot` and `save list`. The Lantern app's Console tab uses it.
 
-### 🔐 Admin HTTP API
+### 🔐 Admin API
 Health, info, players, the mod manifest, the join-password check the Lantern app makes before it starts the game, map state, and the snapshot list, download, restore and import routes. Admin routes are HMAC-signed with a key derived from the RCON password.
 
-### 🖥 Runtime watch
-Reads the in-game runtime's heartbeat and player roster, reports `game=running|stopped runtime=ready|starting|stale` in RCON `status`, and coordinates save operations with the host's Grounded 2 launch wrapper.
+### 🖥 Server status
+RCON `status` reports `game=running|stopped` and `runtime=ready|starting|stale|stopped`.
 
 ### 🧩 Mods
 The runtime loads UE4SS Lua and native mods from the server package's `ue4ss\Mods` folder, and the server lists them at `GET /api/v1/manifest`.

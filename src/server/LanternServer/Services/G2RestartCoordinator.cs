@@ -30,6 +30,10 @@ public sealed class G2RestartCoordinator
     private readonly ILogger<G2RestartCoordinator> _log;
     private readonly LanternServerOptions _opts;
     private readonly SemaphoreSlim _restoreGate = new(1, 1);
+    private int _killRequests;
+
+    /// <summary>How many times <see cref="KillGame"/> was called (tests: it does nothing off Windows).</summary>
+    internal int KillRequests => Volatile.Read(ref _killRequests);
 
     public G2RestartCoordinator(ILogger<G2RestartCoordinator> log, IOptions<LanternServerOptions> opts)
     {
@@ -82,6 +86,7 @@ public sealed class G2RestartCoordinator
     /// </summary>
     public void KillGame(TimeSpan waitForExit)
     {
+        Interlocked.Increment(ref _killRequests);
         if (!OperatingSystem.IsWindows()) return;
 
         var installRoot = NormalizeForCompare(_opts.GameInstallRoot);

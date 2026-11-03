@@ -21,9 +21,20 @@ public sealed class SourceQueryServer : IDisposable
     private readonly Func<IReadOnlyList<KeyValuePair<string, string>>> _rulesProvider;
     private readonly Func<bool> _availabilityProvider;
     private readonly Action<string, string>? _queryObserver;
-    private readonly Dictionary<IPEndPoint, int> _challenges = new();
+    // Issued challenges, oldest first, with an index by address. Only the receive loop touches them.
+    // A challenge lives ChallengeLifetime and the table holds at most MaxChallenges (oldest dropped
+    // first): the table used to keep every address that ever asked, forever, so a spray of challenge
+    // requests (spoofed source addresses cost nothing over UDP) grew it without end.
+    private readonly Dictionary<IPEndPoint, LinkedListNode<IssuedChallenge>> _challenges = new();
+    private readonly LinkedList<IssuedChallenge> _challengeOrder = new();
     private readonly Random _challengeRng = new();
     private CancellationTokenSource? _cts;
+    internal const int MaxChallenges = 4096;
+    internal static readonly TimeSpan ChallengeLifetime = TimeSpan.FromSeconds(30);
+    internal TimeProvider Clock { get; init; } = TimeProvider.System;
+    internal int ChallengeCount => _challenges.Count;
+
+    private readonly record struct IssuedChallenge(IPEndPoint From, int Value, DateTimeOffset IssuedAt);
     private Task? _loop;
 
     // <param name="queryObserver">Optional diagnostic callback invoked for every
@@ -162,10 +173,11 @@ public sealed class SourceQueryServer : IDisposable
 
     private byte[] BuildPlayerOrRulesReply(IPEndPoint from, int challenge, bool isRules)
     {
+        var now = Clock.GetUtcNow();
         if (challenge == -1)
         {
             var issued = _challengeRng.Next();
-            _challenges[from] = issued;
+            IssueChallenge(from, issued, now);
             using var msc = new MemoryStream();
             using var wc = new BinaryWriter(msc);
             wc.Write(-1);
@@ -173,7 +185,14 @@ public sealed class SourceQueryServer : IDisposable
             wc.Write(issued);
             return msc.ToArray();
         }
-        if (!_challenges.TryGetValue(from, out var expected) || expected != challenge)
+        if (!_challenges.TryGetValue(from, out var node))
+            return Array.Empty<byte>();
+        if (now - node.Value.IssuedAt > ChallengeLifetime)
+        {
+            ForgetChallenge(node);
+            return Array.Empty<byte>();
+        }
+        if (node.Value.Value != challenge)
             return Array.Empty<byte>();
 
         using var ms = new MemoryStream();
@@ -206,6 +225,23 @@ public sealed class SourceQueryServer : IDisposable
             }
         }
         return ms.ToArray();
+    }
+
+    private void IssueChallenge(IPEndPoint from, int value, DateTimeOffset now)
+    {
+        if (_challenges.TryGetValue(from, out var previous)) ForgetChallenge(previous);
+        _challenges[from] = _challengeOrder.AddLast(new IssuedChallenge(from, value, now));
+        while (_challengeOrder.First is { } oldest
+               && (now - oldest.Value.IssuedAt > ChallengeLifetime || _challenges.Count > MaxChallenges))
+        {
+            ForgetChallenge(oldest);
+        }
+    }
+
+    private void ForgetChallenge(LinkedListNode<IssuedChallenge> node)
+    {
+        _challengeOrder.Remove(node);
+        _challenges.Remove(node.Value.From);
     }
 
     private static void WriteCString(BinaryWriter w, string value)

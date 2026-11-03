@@ -167,7 +167,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 return null;
             }
 
-            if (!HasNonEmptyWorld(sourceDir))
+            if (!HasWorldToProtect())
             {
                 _log.LogWarning("Save source contains no non-empty World.csav: {Dir}", sourceDir);
                 return null;
@@ -216,8 +216,17 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
                 if (ageSeconds <= maxSeconds) continue;
                 if (File.Exists(s.FilePath))
                 {
-                    try { File.Delete(s.FilePath); } catch { }
+                    try { File.Delete(s.FilePath); }
+                    catch (Exception ex)
+                    {
+                        // Keep the row while its zip is still there; the next pass tries again.
+                        _log.LogWarning(ex, "Snapshot rotation could not delete {Path}", s.FilePath);
+                        continue;
+                    }
                 }
+                // The zip is gone (deleted now or earlier), so the row goes too: a row without its
+                // file kept listing a snapshot that could not be downloaded or restored.
+                _db.DeleteSnapshot(s.SnapshotId);
             }
         }
         catch (Exception ex)
@@ -247,6 +256,36 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
 
     private static bool IsWorldPath(string relativePath) =>
         string.Equals(Path.GetFileName(relativePath), "World.csav", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether the live save tree holds a world worth a snapshot. The one check both
+    /// <see cref="SnapshotAsync"/> and a restore's "is there anything to protect" decision use, so
+    /// the two can never disagree.
+    /// </summary>
+    private bool HasWorldToProtect() => HasNonEmptyWorld(GameSaveTree);
+
+    /// <summary>
+    /// Whether a snapshot can be written to <see cref="LanternServerOptions.SaveDir"/> at all: the
+    /// folder exists or can be made, and a file can be created and removed there. A restore checks
+    /// this before it stops the game, so a snapshot folder that cannot take a file refuses the
+    /// restore with the game still running.
+    /// </summary>
+    private bool CanWriteSnapshots()
+    {
+        try
+        {
+            Directory.CreateDirectory(_opts.SaveDir);
+            var probe = Path.Combine(_opts.SaveDir, $".write-check-{Guid.NewGuid():N}.tmp");
+            File.WriteAllBytes(probe, new byte[] { 0 });
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Snapshot folder {Dir} cannot take a new snapshot", _opts.SaveDir);
+            return false;
+        }
+    }
 
     internal static bool HasNonEmptyWorld(string sourceDir) =>
         Directory.Exists(sourceDir) &&
@@ -278,12 +317,17 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
         return Convert.ToHexString(hash);
     }
 
+    /// <summary>
+    /// Snapshots whose zip is still on disk, newest first (the list API and RCON "save list").
+    /// A row whose file is missing is left out rather than offered for a download or restore that
+    /// cannot work, and does not count toward <paramref name="limit"/>.
+    /// </summary>
     public IReadOnlyList<SnapshotRecord> ListSnapshots(int limit = 50) =>
-        _db.ListSnapshots(limit);
+        _db.ListSnapshots(int.MaxValue).Where(s => File.Exists(s.FilePath)).Take(limit).ToList();
 
     /// <summary>
-    /// Restore a previously-taken snapshot by ID. Takes a pre-restore
-    /// snapshot first (so the operation is reversible), kills the game, swaps
+    /// Restore a previously-taken snapshot by ID. Stops the game, takes a pre-restore
+    /// snapshot when there is a world to keep (so the operation is reversible), swaps
     /// the canonical Grounded2 save tree, then releases the gate
     /// so the supervisor relaunches Grounded 2 with the restored world.
     /// </summary>
@@ -307,8 +351,8 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
     /// Restore from a freshly-uploaded zip on disk (e.g. an imported vanilla
     /// save or a cross-server transfer payload). The zip must contain at least
     /// one non-empty World.csav under a save directory.
-    /// Takes a pre-restore snapshot, kills the game, swaps in the new files, then
-    /// releases the supervisor gate.
+    /// Stops the game, takes a pre-restore snapshot when a world exists (refusing before the
+    /// stop if none could be written), swaps in the new files, then releases the supervisor gate.
     /// </summary>
     public async Task<bool> RestoreFromZipPathAsync(
         string zipPath, string requestedBy, string auditAction, CancellationToken ct = default)
@@ -337,6 +381,23 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
 
         using var _ = await _coordinator.BeginRestoreAsync(ct).ConfigureAwait(false);
 
+        // 0. Decide BEFORE stopping the game whether there is a world to protect. It used to stop
+        // the game and then abort, because the pre-restore snapshot finds nothing on a server with
+        // no world yet: an import onto a new server stopped it and changed nothing. With a world,
+        // refuse now, game still running, if no snapshot could be written.
+        if (HasWorldToProtect())
+        {
+            if (!CanWriteSnapshots())
+            {
+                _log.LogWarning("Restore refused before stopping the game: a world exists and no pre-restore snapshot can be written");
+                return false;
+            }
+        }
+        else
+        {
+            _log.LogInformation("Restore: no world in {Dir} yet, so there is nothing to keep a copy of", GameSaveTree);
+        }
+
         // 1. Stop Grounded 2 first. Taking a snapshot BEFORE the kill would
         // capture a mixed set of World/HostPlayer/player files. Kill, wait for
         // exact exit, then snapshot the stable tree.
@@ -347,12 +408,19 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             return false;
         }
 
-        // 2. Snapshot the now-stable state so a bad restore is reversible.
-        var pre = await SnapshotAsync($"pre-restore:{requestedBy}", ct).ConfigureAwait(false);
-        if (pre is null)
+        // 2. Snapshot the now-stable state so a bad restore is reversible. Asked again after the
+        // stop, with the same check, so a first save the game wrote while stopping is kept too.
+        SnapshotRecord? pre = null;
+        if (HasWorldToProtect())
         {
-            _log.LogWarning("Restore aborted: pre-restore snapshot failed");
-            return false;
+            pre = await SnapshotAsync($"pre-restore:{requestedBy}", ct).ConfigureAwait(false);
+            if (pre is null)
+            {
+                // The game is stopped but the world is untouched; releasing the gate lets the
+                // supervisor start it again on the same world.
+                _log.LogWarning("Restore aborted: pre-restore snapshot failed; the world was not changed");
+                return false;
+            }
         }
 
         // 3. Atomic Grounded2-tree swap. Extract the incoming zip into a temp
@@ -415,8 +483,9 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             }
 
             var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-            _db.Audit(requestedBy, auditAction, target: pre.SnapshotId,
-                detailJson: $"{{\"pre_snapshot\":\"{pre.SnapshotId}\",\"source\":\"{Path.GetFileName(zipPath)}\"}}",
+            var preJson = pre is null ? "null" : $"\"{pre.SnapshotId}\"";
+            _db.Audit(requestedBy, auditAction, target: pre?.SnapshotId,
+                detailJson: $"{{\"pre_snapshot\":{preJson},\"source\":\"{Path.GetFileName(zipPath)}\"}}",
                 unixSeconds: nowUnix);
 
             // The FileSystemWatcher's directory handle was opened against
@@ -430,7 +499,7 @@ public sealed class SaveOrchestratorService : IHostedService, IDisposable
             _watcher = null;
             if (_opts.SnapshotsEnabled) TryStartFileWatcher();
 
-            _log.LogInformation("Restore complete from {Zip}; pre-snapshot {Id}", zipPath, pre.SnapshotId);
+            _log.LogInformation("Restore complete from {Zip}; pre-snapshot {Id}", zipPath, pre?.SnapshotId ?? "(none: no world before)");
             return true;
         }
         catch (Exception ex)

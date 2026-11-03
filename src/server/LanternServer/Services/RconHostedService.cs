@@ -96,7 +96,7 @@ public sealed class RconHostedService : IHostedService
         }
         if (arg == "list")
         {
-            var snaps = _saves.Database.ListSnapshots(20);
+            var snaps = _saves.ListSnapshots(20);
             if (snaps.Count == 0) return "no snapshots yet";
             var sb = new System.Text.StringBuilder();
             foreach (var s in snaps)

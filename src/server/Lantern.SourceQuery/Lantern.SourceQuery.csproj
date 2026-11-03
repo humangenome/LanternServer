@@ -3,6 +3,9 @@
     <RootNamespace>Lantern.SourceQuery</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="LanternServer.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../../shared/Lantern.Abstractions/Lantern.Abstractions.csproj" />
   </ItemGroup>
 </Project>

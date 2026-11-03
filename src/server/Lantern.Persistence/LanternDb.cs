@@ -208,6 +208,13 @@ public sealed class LanternDb
             """, new { lim = limit }).ToList();
     }
 
+    /// <summary>Remove one snapshot's row (rotation calls this once the zip is gone).</summary>
+    public void DeleteSnapshot(string snapshotId)
+    {
+        using var c = Open();
+        c.Execute("DELETE FROM save_snapshots WHERE snapshot_id = @id", new { id = snapshotId });
+    }
+
     // ── Audit ─────────────────────────────────────────────────────────────
 
     public void Audit(string actor, string action, string? target, string? detailJson, long unixSeconds)

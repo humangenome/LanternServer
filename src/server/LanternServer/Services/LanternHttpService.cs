@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Lantern.Rcon;
 using LanternServer.Configuration;
 using LanternServer.Static;
 using Microsoft.Extensions.Configuration;
@@ -461,6 +462,9 @@ public sealed class LanternHttpService : BackgroundService
                 // close the connection rather than let it drain.
                 res.KeepAlive = false;
                 if (status == 503) res.Headers["Retry-After"] = "30";
+                if (status == 429)
+                    res.Headers["Retry-After"] = Math.Max(1, SourceGuard.BlockedSeconds(
+                        SourceGuard.SourceOf(req.RemoteEndPoint), SourceGuard.NowMs())).ToString();
                 await WriteJsonAsync(res, status, new { error });
                 return;
             }
@@ -666,6 +670,12 @@ public sealed class LanternHttpService : BackgroundService
         var hasBody = req.HasEntityBody;
         var length = hasBody ? req.ContentLength64 : 0;
 
+        // An address turned away for wrong signatures (or wrong RCON passwords: the count is shared, it is
+        // the same password) is refused here, before a single body byte is read.
+        var source = SourceGuard.SourceOf(req.RemoteEndPoint);
+        var blocked = SourceGuard.BlockedSeconds(source, SourceGuard.NowMs());
+        if (blocked > 0) return (null, 429, $"too many wrong signatures from this address; try again in {blocked} s");
+
         var d = HttpAuthGate.Evaluate(_authKey, method, path,
             req.Headers[HttpAuthGate.TimestampHeader], req.Headers[HttpAuthGate.SignatureHeader],
             req.Headers[HttpAuthGate.ContentShaHeader],
@@ -674,6 +684,7 @@ public sealed class LanternHttpService : BackgroundService
         switch (d.Verdict)
         {
             case HttpAuthGate.Verdict.Unauthorized:
+                if (d.WrongSignature) WrongSignature(source);
                 return (null, 401, "unauthorized");
             case HttpAuthGate.Verdict.ContentShaRequired:
                 return (null, 401, "Update the Lantern app, then try again. (Uploads over 64 KB need the " + HttpAuthGate.ContentShaHeader + " header.)");
@@ -682,6 +693,7 @@ public sealed class LanternHttpService : BackgroundService
 
             case HttpAuthGate.Verdict.VerifiedNoBody:
                 if (!_replay.TryRecord(d.Signature, d.Timestamp, now)) return (null, 401, "unauthorized");
+                SourceGuard.Success(source);
                 return (BufferedBody.Empty, 200, "");
 
             case HttpAuthGate.Verdict.ReadSmallThenVerify:
@@ -692,8 +704,12 @@ public sealed class LanternHttpService : BackgroundService
                 catch (HttpBodyIncompleteException) { return (null, 400, "incomplete body"); }
                 var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                 if (!HttpAuthGate.SignatureMatches(_authKey, method, path, d.Timestamp, sha, d.Signature))
+                {
+                    WrongSignature(source);
                     return (null, 401, "unauthorized");
+                }
                 if (!_replay.TryRecord(d.Signature, d.Timestamp, now)) return (null, 401, "unauthorized");
+                SourceGuard.Success(source);
                 if (bytes.Length == 0) return (BufferedBody.Empty, 200, "");
                 var tempPath = await HttpBodyReader.WriteTempAsync(bytes, UploadTempDir, ct).ConfigureAwait(false);
                 return (new BufferedBody(tempPath, sha, bytes.Length), 200, "");
@@ -705,6 +721,7 @@ public sealed class LanternHttpService : BackgroundService
                 // check comes before the body so a captured request cannot even
                 // start a second upload.
                 if (!_replay.TryRecord(d.Signature, d.Timestamp, now)) return (null, 401, "unauthorized");
+                SourceGuard.Success(source);
                 var large = d.ReadCap > HttpAuthGate.SmallBodyMaxBytes;
                 if (large && !await _uploadLimiter.WaitAsync(0).ConfigureAwait(false))
                     return (null, 503, "another upload is in progress");
@@ -729,6 +746,15 @@ public sealed class LanternHttpService : BackgroundService
             }
         }
         return (null, 401, "unauthorized");
+    }
+
+    // A replay is not counted (two identical signed GETs inside one second share a signature), and neither is a
+    // body that does not match a correctly signed hash: whoever signed it holds the key.
+    private void WrongSignature(string source)
+    {
+        if (SourceGuard.Failure(source, SourceGuard.NowMs()))
+            _log.LogWarning("{BlockLine}", SourceGuard.BlockLine("http", source, SourceGuard.NowMs()));
+        if (SourceGuard.TakeNotice() is { } tableNotice) _log.LogWarning("{Notice}", tableNotice);
     }
 
     // Slow-client limits on the Windows HTTP stack: a client that stops sending its

@@ -4,7 +4,7 @@ namespace Lantern.Protocol;
 
 /// <summary>
 /// Wire protocol between Lantern.dll (UE4SS plugin loaded into the G2
-/// process) and LanternServer.exe (.NET 8 supervisor). Bumped on any
+/// process) and LanternServer.exe (.NET 10 supervisor). Bumped on any
 /// breaking schema change.
 /// </summary>
 public static class ProtocolVersion

@@ -1,7 +1,7 @@
 # LanternServer
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![.NET 8](https://img.shields.io/badge/.NET-8.0-blueviolet.svg)](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-blueviolet.svg)](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)
 [![Platform](https://img.shields.io/badge/Platform-Windows_x64-blue.svg)](#requirements)
 [![Game](https://img.shields.io/badge/Game-Grounded_2-darkgreen.svg)](https://store.steampowered.com/app/2661300/)
 [![Client App](https://img.shields.io/badge/Client_App-Lantern-brightgreen.svg)](https://github.com/HumanGenome/Lantern)
@@ -35,7 +35,7 @@ The runtime loads UE4SS Lua and native mods from the server package's `ue4ss\Mod
 ## Requirements
 
 - Players: the Steam version of Grounded 2 on a Windows PC and the [Lantern app](https://github.com/HumanGenome/Lantern)
-- Building this source: the .NET 8 SDK
+- Building this source: the .NET 10 SDK
 
 ## Installation
 

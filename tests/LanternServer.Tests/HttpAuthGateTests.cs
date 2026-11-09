@@ -26,6 +26,20 @@ public sealed class HttpAuthGateTests
         HttpAuthGate.Evaluate(key ?? Key, method, path, ts.ToString(), sig, sha, hasBody, len, 64L * 1024 * 1024, Now, 300);
 
     [Fact]
+    public void Only_a_fresh_well_formed_wrong_signature_counts_as_a_guess()
+    {
+        var wrong = HttpAuthGate.Sign(SHA256.HashData(Encoding.UTF8.GetBytes("guess")), "GET", "/api/v1/info", Now, HttpAuthGate.EmptySha256);
+        var right = HttpAuthGate.Sign(Key, "GET", "/api/v1/info", Now, HttpAuthGate.EmptySha256);
+        Eval("GET", "/api/v1/info", Now, wrong, null, false, 0).WrongSignature.Should().BeTrue();
+        Eval("GET", "/api/v1/info", Now, right, null, false, 0).WrongSignature.Should().BeFalse();
+        Eval("GET", "/api/v1/info", Now - 3600, wrong, null, false, 0).WrongSignature.Should().BeFalse("a stale timestamp is a clock problem");
+        Eval("GET", "/api/v1/info", Now, "zz" + wrong[2..], null, false, 0).WrongSignature.Should().BeFalse("malformed, not a guess");
+        Eval("GET", "/api/v1/info", Now, null, null, false, 0).WrongSignature.Should().BeFalse();
+        var bigWrong = HttpAuthGate.Sign(SHA256.HashData(Encoding.UTF8.GetBytes("guess")), "POST", "/api/v1/snapshots", Now, BigSha);
+        Eval("POST", "/api/v1/snapshots", Now, bigWrong, BigSha, true, 200_000).WrongSignature.Should().BeTrue();
+    }
+
+    [Fact]
     public void NoAdminPassword_RefusesEverySignedRoute()
     {
         var sig = HttpAuthGate.Sign(Key, "GET", "/api/v1/info", Now, HttpAuthGate.EmptySha256);
@@ -286,7 +300,7 @@ public sealed class HttpAuthGateTests
         ((int)motd.StatusCode).Should().Be(200);
     }
 
-    private sealed class LiveHarness : IAsyncDisposable
+    internal sealed class LiveHarness : IAsyncDisposable
     {
         private readonly TempDir _temp;
         private readonly LanternHttpService _service;
@@ -300,7 +314,7 @@ public sealed class HttpAuthGateTests
             _temp = temp; _service = service; Port = port; Key = key; SaveDir = saveDir; Chat = chat;
         }
 
-        public static async Task<LiveHarness> StartAsync()
+        public static async Task<LiveHarness> StartAsync(Microsoft.Extensions.Logging.ILogger<LanternHttpService>? log = null)
         {
             var temp = new TempDir("lantern-http-live-");
             var port = FreePort();
@@ -321,7 +335,7 @@ public sealed class HttpAuthGateTests
                 new G2RestartCoordinator(NullLogger<G2RestartCoordinator>.Instance, o));
             var chat = new ChatService(NullLogger<ChatService>.Instance, new FixedMonitor(opts));
             var service = new LanternHttpService(
-                NullLogger<LanternHttpService>.Instance, o, new ConfigurationBuilder().Build(), saves, pipe,
+                log ?? NullLogger<LanternHttpService>.Instance, o, new ConfigurationBuilder().Build(), saves, pipe,
                 new InstanceIdentityProvider(o), chat,
                 new IdentityChoiceService(NullLogger<IdentityChoiceService>.Instance, o));
             await service.StartAsync(CancellationToken.None);
@@ -341,14 +355,15 @@ public sealed class HttpAuthGateTests
             return Directory.Exists(dir) ? Directory.GetFiles(dir) : Array.Empty<string>();
         }
 
-        public async Task<int> SignedAsync(string method, string path, byte[] body, bool sendSha, long? ts = null)
+        public async Task<int> SignedAsync(string method, string path, byte[] body, bool sendSha, long? ts = null,
+            IPAddress? from = null, byte[]? signKey = null)
         {
             var t = ts ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var sha = Sha(body);
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-            using var req = new HttpRequestMessage(new HttpMethod(method), $"http://127.0.0.1:{Port}{path}");
+            using var req = new HttpRequestMessage(new HttpMethod(method), $"http://{from ?? IPAddress.Loopback}:{Port}{path}");
             req.Headers.Add("X-Lantern-Timestamp", t.ToString());
-            req.Headers.Add("X-Lantern-Signature", HttpAuthGate.Sign(Key, method, path.Split('?')[0], t, sha));
+            req.Headers.Add("X-Lantern-Signature", HttpAuthGate.Sign(signKey ?? Key, method, path.Split('?')[0], t, sha));
             if (sendSha) req.Headers.Add("X-Lantern-Content-Sha256", sha);
             if (body.Length > 0) req.Content = new ByteArrayContent(body);
             using var resp = await http.SendAsync(req);

@@ -1,8 +1,8 @@
 # Lantern.Rcon
 
-Source RCON server on the RCON TCP port (gameplay port +2). Exposes admin verbs
-like `help`, `status`, `players`, `ping`, `save snapshot`, `save list`,
-`save restore`, plus settings/kick verbs.
+Source RCON listener for LanternServer, on TCP gameplay port +3 (7780 with the default 7777). It handles the
+Source RCON framing and the login; LanternServer's `RconHostedService` answers the commands: `help`, `status`,
+`players`, `ping`, `save snapshot` and `save list`. With no `RconPassword` set, LanternServer does not open
+the port.
 
-PORT FROM BEACON: copy `Beacon.Rcon` and rename. The Source RCON framing ports
-verbatim; adjust the verb set to the Grounded 2 surface.
+The framing is the same as Beacon's `Beacon.Rcon`.

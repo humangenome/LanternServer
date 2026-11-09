@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>12.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -18,9 +18,9 @@
     <!-- Version surfaced by AssemblyInformationalVersionAttribute and used
          by LanternVersionInfo.LanternVersion in /api/v1/info responses. Bump
          in lockstep with the public release-notes file and the git tag. -->
-    <Version>0.1.133</Version>
-    <AssemblyVersion>0.1.133.0</AssemblyVersion>
-    <FileVersion>0.1.133.0</FileVersion>
+    <Version>0.1.134</Version>
+    <AssemblyVersion>0.1.134.0</AssemblyVersion>
+    <FileVersion>0.1.134.0</FileVersion>
     <!-- Strip the absolute checkout path from compiled output. Without a
          PathMap the compiler embeds the build machine's source path into the
          assembly (the PDB path record and [CallerFilePath] strings), leaking
@@ -31,6 +31,11 @@
          the exact string PathMap exists to keep out — plus the repository URL
          and commit. Shipped .pdb files carry all of it, so it stays off. -->
     <EnableSourceLink>false</EnableSourceLink>
+    <!-- .NET 9 and later mark every exe CET-compatible (hardware shadow stacks) by default. Such an exe
+         refuses to start on some Windows builds whose CPU has CET but whose OS only partly supports it
+         ("Your Windows doesn't fully support CET"). Off for every exe here; the release checks the
+         published exes. -->
+    <CETCompat>false</CETCompat>
   </PropertyGroup>
 
   <!-- Assertion for the PathMap above: fail any Release build whose output

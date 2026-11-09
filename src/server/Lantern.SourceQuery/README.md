@@ -1,8 +1,8 @@
 # Lantern.SourceQuery
 
-Source A2S query responder so server-list tools, monitors, and bots can read
-status and player counts on the query UDP port (gameplay port +2; control is +1).
+Source A2S query responder on UDP gameplay port +2 (7779 with the default 7777), so server lists, monitoring
+tools and bots can read the server's name, player count, players and rules. It answers `A2S_INFO`,
+`A2S_PLAYER` and `A2S_RULES` with the standard challenge, and stays silent while the game is not running.
+Challenges expire after 30 seconds.
 
-PORT FROM BEACON: copy `Beacon.SourceQuery` and rename. Update the query
-keywords / AppID to Grounded 2 (Steam AppID 2661300). Wire format ports
-verbatim.
+The wire format is the same as Beacon's `Beacon.SourceQuery`, with Grounded 2's Steam AppID (2661300).

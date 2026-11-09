@@ -38,7 +38,14 @@ internal static class HttpAuthGate
         ReadSmallThenVerify,
     }
 
-    internal readonly record struct Decision(Verdict Verdict, long Timestamp, string Signature, string? DeclaredSha, long ReadCap);
+    internal readonly record struct Decision(Verdict Verdict, long Timestamp, string Signature, string? DeclaredSha, long ReadCap)
+    {
+        /// <summary>
+        /// A well-formed signature with a fresh timestamp that does not match: a guess at the key, which counts
+        /// toward the address's block. Missing or malformed headers and a stale timestamp (a clock problem) do not.
+        /// </summary>
+        public bool WrongSignature { get; init; }
+    }
 
     /// <param name="contentLength">The request's Content-Length, or -1 when it has a body of unknown length (chunked).</param>
     internal static Decision Evaluate(
@@ -68,7 +75,7 @@ internal static class HttpAuthGate
             if (declared is not null && declared != EmptySha256) return Refuse(Verdict.Unauthorized);
             return SignatureMatches(key, method, path, ts, EmptySha256, sig)
                 ? new Decision(Verdict.VerifiedNoBody, ts, sig, EmptySha256, 0)
-                : Refuse(Verdict.Unauthorized);
+                : Refuse(Verdict.Unauthorized) with { WrongSignature = true };
         }
 
         if (contentLength > maxUploadBytes) return Refuse(Verdict.TooLarge);
@@ -80,7 +87,7 @@ internal static class HttpAuthGate
         {
             return SignatureMatches(key, method, path, ts, declared, sig)
                 ? new Decision(Verdict.VerifiedStream, ts, sig, declared, cap)
-                : Refuse(Verdict.Unauthorized);
+                : Refuse(Verdict.Unauthorized) with { WrongSignature = true };
         }
 
         if (contentLength > SmallBodyMaxBytes) return Refuse(Verdict.ContentShaRequired);

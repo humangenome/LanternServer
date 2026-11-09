@@ -1,10 +1,5 @@
 # Lantern.Protocol
 
-Wire protocol shared by LanternServer, the launcher, and the native plugin:
-the frame codec and MessagePack message records.
-
-PORT FROM BEACON: copy `Beacon.Protocol` (FrameCodec + Protocol records) and
-rename the namespace to `Lantern.Protocol`. The wire format ports verbatim;
-adjust message payloads only where the Grounded 2 surface differs from
-Subnautica 2. The generated protocol code is gitignored (see `.gitignore` ->
-`src/shared/Lantern.Protocol/Generated/`).
+Message types shared by LanternServer and the Lantern app: the frame codec and MessagePack records of the
+server's local message pipe, and the join password proof (`JoinPass`) that the app sends before it starts
+the game. Generated code is not committed (`src/shared/Lantern.Protocol/Generated/` is in `.gitignore`).

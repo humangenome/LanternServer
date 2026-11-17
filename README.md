@@ -6,44 +6,41 @@
 [![Game](https://img.shields.io/badge/Game-Grounded_2-darkgreen.svg)](https://store.steampowered.com/app/2661300/)
 [![Client App](https://img.shields.io/badge/Client_App-Lantern-brightgreen.svg)](https://github.com/HumanGenome/Lantern)
 
-Grounded 2 has no dedicated server. LanternServer is the server half of [Lantern](https://github.com/HumanGenome/Lantern): its release zip runs Grounded 2 as a dedicated server on a Windows machine with a public IP and port, and players join it with the Lantern app. This repo is the .NET control service in that zip.
+Grounded 2 has no dedicated server. [Lantern](https://github.com/HumanGenome/Lantern) adds one, and this repo is its server side.
 
-Players join with the [Lantern app](https://github.com/HumanGenome/Lantern) and the Steam version of Grounded 2 on Windows. Stock Grounded 2 cannot connect to a Lantern server directly.
+Every player needs the [Lantern app](https://github.com/HumanGenome/Lantern) and the Steam version of Grounded 2 on Windows.
 
-The **release zip is the complete server**: this .NET service plus the in-game runtime (a `ue4ss\` folder with the host mod and native runtime, and the WARP redist). Building this source produces the control service only.
+The **release zip is the complete server**. Building this source gives you `LanternServer.exe` alone, without the parts that run inside the game.
 
 ## Features
 
 ### 💾 World backups
-Takes a snapshot of the world every time the game autosaves (`SnapshotsEnabled`, on by default) and whenever an admin asks. A restore swaps the save folder in one step, so a failed restore never leaves a half-written world, and an uploaded Grounded 2 save can be restored the same way.
+Backs up the world at every autosave and whenever an admin asks. A restore that fails never leaves a half-written world, and an uploaded Grounded 2 save restores the same way.
 
-### 📡 Server query
-Answers Source A2S query on the query port, so server lists, monitoring tools and bots can read the server name, map and player count.
+### 📡 Shows up in server lists
+Server lists, monitoring tools and Discord bots can read the server name, map and player count.
 
-### 🛠 RCON
-A Source-compatible RCON listener with `help`, `status`, `players`, `ping`, `save snapshot` and `save list`. The Lantern app's Console tab uses it.
+### 🛠 Server console
+RCON with `help`, `status`, `players`, `ping`, `save snapshot` and `save list`. The Lantern app's **Console** tab uses it.
 
 ### 🔐 Admin API
-Health, info, players, the mod manifest, the join-password check the Lantern app makes before it starts the game, map state, and the snapshot list, download, restore and import routes. Admin routes are HMAC-signed with a key derived from the RCON password.
-
-### 🖥 Server status
-RCON `status` reports `game=running|stopped` and `runtime=ready|starting|stale|stopped`.
+Health, info, players, the mod list, the password check the Lantern app makes before it starts the game, map state, and backup list, download, restore and upload. Admin routes are signed with a key made from the RCON password.
 
 ### 🧩 Mods
-The runtime loads UE4SS Lua and native mods from the server package's `ue4ss\Mods` folder, and the server lists them at `GET /api/v1/manifest`.
+Loads UE4SS Lua and native mods from the server's `ue4ss\Mods` folder and lists them for the Lantern app.
 
 ## Requirements
 
 - Players: the Steam version of Grounded 2 on a Windows PC and the [Lantern app](https://github.com/HumanGenome/Lantern)
 - Building this source: the .NET 10 SDK
 
-## Installation
+## Install
 
 ### Rent a server
-[SurvivalServers.com Grounded 2 hosting](https://www.survivalservers.com/services/game_servers/grounded2/?utm_source=github&utm_medium=readme_install&utm_campaign=lanternserver) ships the complete Lantern server already installed and handles ports, updates and panel integration.
+[SurvivalServers.com](https://www.survivalservers.com/services/game_servers/grounded2/?utm_source=github&utm_medium=readme_install&utm_campaign=lanternserver) runs Grounded 2 servers with LanternServer installed.
 
-### Self-hosting
-Not supported yet. The release zip is the server runtime that rented Lantern servers run, and their hosting panel does the setup around it for each server: it puts the runtime into the game folder, writes the game's launch settings, and starts and watches the game the way the runtime expects. The bundled `host-instance.ps1` does none of that. Started the way this page used to describe (2026-10-19 test), Grounded 2 never opened a server port and LanternServer reported the game as down, so nobody could join.
+### Host your own
+Not supported yet. The release zip needs the setup a hosting panel does for each server: it puts the runtime into the game folder, writes the game's launch settings, and starts and watches the game. The bundled `host-instance.ps1` does none of that, and started on its own, Grounded 2 never opens a server port.
 
 Players connect with the Lantern app to `<host>:<GameplayPort>` of a running server.
 
@@ -79,7 +76,7 @@ dotnet build src/server/LanternServer/LanternServer.csproj -c Release
 
 ## Contributing
 
-Bug reports and pull requests are welcome in this repo's [issues](https://github.com/HumanGenome/LanternServer/issues). Security problems go through [private vulnerability reporting](https://github.com/HumanGenome/LanternServer/security/advisories/new), never a public issue.
+Bugs: open an [issue](https://github.com/HumanGenome/LanternServer/issues). Pull requests are welcome. Security problems go through [private reporting](https://github.com/HumanGenome/LanternServer/security/advisories/new).
 
 ## Community note
 

@@ -15,7 +15,7 @@ The **release zip is the complete server**. Building this source gives you `Lant
 ## Features
 
 ### 💾 World backups
-Backs up the world at every autosave and whenever an admin asks. A restore that fails never leaves a half-written world, and an uploaded Grounded 2 save restores the same way.
+Backs up the world whenever an admin asks, and before every restore or upload. A restore that fails never leaves a half-written world, and an uploaded Grounded 2 save restores the same way.
 
 ### 📡 Shows up in server lists
 Server lists, monitoring tools and Discord bots can read the server name, map and player count.
@@ -51,7 +51,7 @@ The Lantern app finds the other ports from the gameplay port at these offsets, s
 | Offset | Default | Purpose | Proto |
 |--------|---------|---------|-------|
 | +0 | 7777 | Gameplay, the join port | UDP |
-| +1 | 7778 | Control / IPC identifier, local only | none |
+| +1 | 7778 | Reserved, unused | none |
 | +2 | 7779 | Server query (Source A2S) | UDP |
 | +3 | 7780 | RCON (Source RCON) | TCP |
 | +4 | 7781 | Admin HTTP API | TCP |
